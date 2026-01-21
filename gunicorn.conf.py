@@ -8,5 +8,5 @@ threads = int(os.getenv("THREADS", "1"))
 # Logs
 accesslog = "-" # Value '-' means log to stdout
 errorlog = "-"
-loglevel = os.getenv("LOG_LEVEL", "info").lower() # Valid options: debug, info, warning, error, critical
+loglevel = os.getenv("LOG_LEVEL", "info").lower()
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
