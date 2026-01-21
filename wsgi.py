@@ -1,4 +1,4 @@
-from cert_registry import app
+from cert_registry.app import create_app
+from cert_registry.config import Config
 
-if __name__ == "__main__":
-    app.run()
+app = create_app(Config.load_from_env())
