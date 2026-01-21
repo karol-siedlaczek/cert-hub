@@ -30,12 +30,9 @@ class Config:
                 val = f.default
             kwargs[f.name] = val
         
-        raw_log_level = str(kwargs.get("LOG_LEVEL", "INFO")).strip().upper()
-        if raw_log_level == "WARN":
-            raw_log_level = "WARNING"
-        elif raw_log_level not in cls.ALLOWED_LOG_LEVELS:
-            raise ConfigError(f"Invalid LOG_LEVEL={raw_log_level}, allowed choices: {(', ').join(cls.ALLOWED_LOG_LEVELS)}")
-        kwargs["LOG_LEVEL"] = raw_log_level
+        log_level = str(kwargs.get("LOG_LEVEL", "INFO")).strip().upper()
+        if log_level not in cls.ALLOWED_LOG_LEVELS:
+            raise ConfigError(f"Invalid LOG_LEVEL={log_level}, allowed choices: {(', ').join(cls.ALLOWED_LOG_LEVELS)}")
         
         conf = cls(**kwargs)
         
