@@ -33,6 +33,7 @@ class Config:
         log_level = str(kwargs.get("LOG_LEVEL", "INFO")).strip().upper()
         if log_level not in cls.ALLOWED_LOG_LEVELS:
             raise ConfigError(f"Invalid LOG_LEVEL={log_level}, allowed choices: {(', ').join(cls.ALLOWED_LOG_LEVELS)}")
+        kwargs["LOG_LEVEL"] = log_level
         
         conf = cls(**kwargs)
         
