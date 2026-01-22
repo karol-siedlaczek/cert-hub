@@ -210,3 +210,4 @@ __marimo__/
 logs
 logs/*
 .envrc
+config.yaml
