@@ -1,2 +1,7 @@
 Flask>=3.02,<4.0
-gunicorn
+gunicorn==20.1.0
+certbot==5.2.2
+certbot-dns-route53==5.2.2
+acme==5.2.2
+cffi==2.0.0
+#future==1.0.0
