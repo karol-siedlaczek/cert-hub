@@ -1,7 +1,7 @@
 import subprocess
 from flask import abort, request, current_app as app
 
-def require_api_access(domain: str | None = None) -> None:
+def require_api_access(domain_key: str, scope: str) -> None:
     expected = app.config.get("API_TOKEN")
     
     if not expected: # TODO - make required in config.py or implements different tokens for each remote addr and domain

@@ -1,9 +1,9 @@
 import os
 
 daemon = False
-bind = f"{os.getenv("BIND_IP", "0.0.0.0")}:{os.getenv("BIND_PORT", "8080")}"
-workers = int(os.getenv("WORKERS", "2"))
-threads = int(os.getenv("THREADS", "1"))
+bind = f"{os.getenv("GUNICORN_BIND_IP", "0.0.0.0")}:{os.getenv("GUNICORN_BIND_PORT", "8080")}"
+workers = int(os.getenv("GUNICORN_WORKERS", "1"))
+threads = int(os.getenv("GUNICORN_THREADS", "1"))
 
 # Logs
 accesslog = "-" # Value '-' means log to stdout
