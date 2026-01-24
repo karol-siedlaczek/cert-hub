@@ -17,7 +17,6 @@ class CertConfig:
     domains: list[str]
     plugin: str
     
-    
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CertConfig":
         pass
@@ -27,7 +26,6 @@ class CertConfig:
 class TokenPermissionConfig:
     scope: str
     action: str    
-    
     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TokenPermissionConfig":
@@ -40,8 +38,7 @@ class TokenConfig:
     value: str
     allowed_ips: list[str]
     permissions: list[TokenPermissionConfig]
-    
-    
+     
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TokenConfig":
         pass
@@ -65,7 +62,6 @@ class Config:
     
     REQUIRED_ENVS: ClassVar[Tuple[str, ...]] = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
     ALLOWED_LOG_LEVELS: ClassVar[Tuple[str, ...]] = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
-    
     
     @classmethod
     def load(cls) -> "Config":
@@ -109,11 +105,9 @@ class Config:
         
         params["CERTS"] = certs
         params["TOKENS"] = tokens
-        print(params) # TODO - For testing
         
         return cls(**params)
 
-    
     @staticmethod
     def _parse_certs(certs_raw: Any) -> Dict[str, Dict[str, Any]]:
         if certs_raw is None:
@@ -150,7 +144,6 @@ class Config:
         
         return certs
     
-    
     @staticmethod
     def _parse_tokens(tokens_raw: Any, certs: Dict[str, Dict[str, Any]]) -> None:
         if tokens_raw is None:
@@ -160,7 +153,7 @@ class Config:
         
         cert_keys = set(certs.keys())
         cert_keys_escaped = [re.escape(k) for k in cert_keys]
-        permission_regex = re.compile(rf'^(\*|{"|".join(cert_keys_escaped)}):(\*|read|issue|renew)$')
+        permission_regex = re.compile(rf'^(\*|{"|".join(cert_keys_escaped)}):(\*|read|issue|renew|health)$')
         tokens: List[Dict[str, Any]] = []
         
         for item in tokens_raw:
@@ -199,7 +192,7 @@ class Config:
                 matched = permission_regex.match(permission)
                 
                 if not matched:
-                    raise ConfigError(f"permission entry '{permission}' is invalid for '{env_ref}' token, value needs to be provided in following format: '(*|<cert_key>):(*|read|issue|renew)'")
+                    raise ConfigError(f"permission entry '{permission}' is invalid for '{env_ref}' token, value needs to be provided in following format: '(*|<cert_key>):(*|read|issue|renew|health)'")
                 
                 cert_key, action = matched.groups()
                 parsed_permissions.append((cert_key, action))
