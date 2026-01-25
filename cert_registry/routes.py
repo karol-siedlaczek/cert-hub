@@ -1,5 +1,5 @@
 
-from typing import cast
+from .models.token import PermissionAction
 from flask import Blueprint, Response, jsonify, send_file, abort, request, current_app as app
 from .utils import require_api_access, build_response, run_cmd, get_conf
 
@@ -14,8 +14,8 @@ api = Blueprint("api", __name__)
 
 @api.route("/health", methods=["GET"])
 def health() -> Response:
-    # require_api_access("health")
-    # conf = get_conf()
+    # require_api_access(PermissionAction.HEALTH.value)
+    conf = get_conf()
     #certs_health = []
     # print(conf.CERTS)
     #for cert in conf.CERTS:
@@ -29,20 +29,20 @@ def health() -> Response:
 
 @api.route("/api/certs/renew", methods=["POST"])
 def renew_certs() -> Response:
-    require_api_access("renew")
+    require_api_access(PermissionAction.RENEW.value)
     
     return jsonify(method="TODO - renew_certs")
 
 
 @api.route("/api/certs/issue", methods=["POST"])
 def issue_cert() -> Response:
-    require_api_access("issue")
+    require_api_access(PermissionAction.ISSUE.value)
     
     return jsonify(method="TODO - issue_cert")
 
 
 @api.route("/api/certs/<cert>", methods=["GET"])
 def get_cert() -> Response:
-    require_api_access("read")    
+    require_api_access(PermissionAction.READ.value)    
     
     return jsonify(method="TODO - get_cert")
