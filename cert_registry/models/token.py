@@ -1,18 +1,29 @@
 import re
 from dataclasses import dataclass
 from .require import Require
-from typing import ClassVar, Any
+from typing import Any
+from enum import Enum
 
-@dataclass(frozen=True)
-class TokenPermission:
-    ALLOWED_ACTIONS: ClassVar[set[str]] = { "read", "issue", "renew", "health" }
+class PermissionAction(Enum):
+    ALL = "*"
+    READ = "read"
+    ISSUE = "issue"
+    RENEW = "renew"
+    HEALTH = "health"
     
+    @classmethod
+    def values(cls) -> list[str]:
+        return [item.value for item in cls]
+    
+    
+@dataclass(frozen=True)
+class TokenPermission:    
     scope: str
     action: str    
     
     @classmethod
     def init(cls, index: int, permission: str) -> "TokenPermission":
-        allowed_actions_escaped = [re.escape(k) for k in cls.ALLOWED_ACTIONS]
+        allowed_actions_escaped = [re.escape(k) for k in PermissionAction.values()]
         permission_pattern = re.compile(rf'^(.*):(\*|{"|".join(allowed_actions_escaped)})$')
         permission = permission.strip()
         
@@ -23,7 +34,7 @@ class TokenPermission:
             f"Key 'permissions[{index}]' with '{permission}' permission is invalid, value needs to be provided in following format: '(*|<cert_key>):(*|read|issue|renew|health)'"
         )
         scope, action = match.groups()
-        Require.one_of(f"permissions[{index}]", action, cls.ALLOWED_ACTIONS)
+        Require.one_of(f"permissions[{index}]", action, PermissionAction.values())
         
         return cls(scope, action)
 

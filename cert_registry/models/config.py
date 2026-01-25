@@ -1,7 +1,7 @@
 import os
 import yaml
 from .require import Require
-from .cert import CertEntry
+from .cert import Cert
 from .token import Token
 from typing import Optional, ClassVar, Dict, Any
 from dataclasses import dataclass, fields, field
@@ -24,7 +24,7 @@ class Config:
     certbot_lock_file: str = "/locks/certbot.lock"
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
-    certs: list[CertEntry] = field(default_factory=list)
+    certs: list[Cert] = field(default_factory=list)
     tokens: list[Token] = field(default_factory=list)
     
     @classmethod
@@ -74,17 +74,17 @@ class Config:
         return cls(**params)
 
     @staticmethod
-    def _parse_certs(certs_raw: Any) -> list[CertEntry]:
+    def _parse_certs(certs_raw: Any) -> list[Cert]:
         if certs_raw is None:
             return []
         Require.type("certs", certs_raw, list)
         
-        certs: list[CertEntry] = []
+        certs: list[Cert] = []
         for i, item in enumerate(certs_raw):
             Require.type(f"certs[{i}]", item, dict)
             Require.not_one_of(f"certs[{i}].key", item.get("key"), certs)
             try:
-                certs.append(CertEntry.from_dict(item))
+                certs.append(Cert.from_dict(item))
             except ValueError as e:
                 raise ValueError(f"Error found at certs[{i}]: {e}")
         

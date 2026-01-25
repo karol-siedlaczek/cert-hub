@@ -1,6 +1,7 @@
 import re
 import os
 import ipaddress
+import importlib.util
 from pathlib import Path
 from typing import Any, Match, Type, TypeVar, Pattern
 
@@ -204,6 +205,19 @@ class Require():
         if val in not_allowed_values:
             Require._raise_error(
                 default_msg=f"Field '{field}={val}' is duplicated, cannot be one of: {(', ').join(not_allowed_values)}",
+                custom_msg=custom_msg
+            )
+    
+    @staticmethod
+    def installed_module(
+        field: str,
+        val: str,
+        module_name: list[Any], 
+        custom_msg: str | None = None
+    ) -> None:
+        if importlib.util.find_spec(module_name) is not None:
+            Require._raise_error(
+                default_msg=f"Field '{field}={val}' requires module '{module_name}' to be installed",
                 custom_msg=custom_msg
             )
 
