@@ -1,8 +1,7 @@
 
 from typing import cast
 from flask import Blueprint, Response, jsonify, send_file, abort, request, current_app as app
-from .utils import require_api_access, build_response, run_cmd
-from .config import Config
+from .utils import require_api_access, build_response, run_cmd, get_conf
 
 api = Blueprint("api", __name__)
 
@@ -16,7 +15,16 @@ api = Blueprint("api", __name__)
 @api.route("/health", methods=["GET"])
 def health() -> Response:
     # require_api_access("health")
-    return build_response(code=200, data={ "health": "OK" })
+    # conf = get_conf()
+    #certs_health = []
+    # print(conf.CERTS)
+    #for cert in conf.CERTS:
+    #    certs_health.append(cert["key"])
+    payload = {
+        "health": "OK",
+    #    "certs": certs_health
+    }
+    return build_response(code=200, data=payload)
 
 
 @api.route("/api/certs/renew", methods=["POST"])

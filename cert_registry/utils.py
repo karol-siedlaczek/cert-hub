@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import cast, Any
 from http import HTTPStatus
 from flask import Response, abort, jsonify, g, request, current_app as app
-from .config import Config
+from .models.config import Config
 
 def get_conf() -> Config:
     if "conf" not in g:

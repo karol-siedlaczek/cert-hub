@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 from flask import Flask
-from .config import Config
+from .models.config import Config
 from .routes import api as api_blueprint
 
 def create_app() -> Flask:
@@ -18,8 +18,8 @@ def create_app() -> Flask:
 
 
 def setup_paths(config: Config) -> None:
-    dir_params = ["LOGS_DIR", "CERTS_DIR"]
-    file_params = ["CONFIG_FILE", "CERTBOT_LOCK_FILE"]
+    dir_params = ["logs_dir", "certs_dir"]
+    file_params = ["conf_file", "certbot_lock_file"]
     
     for param in dir_params:
         value = getattr(config, param)
@@ -35,9 +35,9 @@ def setup_paths(config: Config) -> None:
 
 
 def setup_logging(config: Config) -> None:    
-    level_name = (config.LOG_LEVEL or "INFO").upper()
+    level_name = (config.log_level or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
-    log_file = f"{config.LOGS_DIR}/app.log"
+    log_file = f"{config.logs_dir}/app.log"
     formatter = logging.Formatter(
         "%(asctime)s %(levelname)s [pid=%(process)d] [%(name)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
