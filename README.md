@@ -23,6 +23,35 @@ TODO
 | `AWS_ACCESS_KEY_ID` | `string` | :heavy_check_mark: | - | TODO |
 | `AWS_SECRET_ACCESS_KEY` | `string` | :heavy_check_mark: | - | TODO |
 
+## Configuration
+TODO
+Application needs config file with defined certs and tokens, example:
+```yaml
+certs:
+  - key: "example.com"
+    email: "admin@example.com"
+    domains: 
+      - "*.example.com"
+      - "example.com"
+    plugin: "dns-route53"
+
+tokens:
+  - env: TOKEN_ADMIN
+    allowed_ips:
+      - 127.0.0.1/32
+    permissions:
+      - "*:health"
+      - "*:read"
+      - "*:renew"
+      - "*:issue"
+  - env: TOKEN_EXAMPLE
+    allowed_ips:
+      - "192.0.0.0/24"
+    permissions:
+      - "example.com:read"
+      - "example.com:renew"
+```
+
 # Notes
 before start gunicorn run:
 ```
