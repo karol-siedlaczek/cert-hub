@@ -1,4 +1,4 @@
-# cert-registry
+# Cert registry
 
 ## Developments
 TODO
