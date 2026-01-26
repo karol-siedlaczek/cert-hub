@@ -1,21 +1,10 @@
 # cert-registry
 
-before start gunicorn run:
-```
-gunicorn --check-config
-```
+## Developments
+TODO
 
-
-
-# @api.route("/certs/<domain>")
-# def certs(domain: str) -> Response:
-#     cert_path = Path(app.config["CERTS_DIR"], domain)
-    
-#     if not cert_path.exists():
-#         abort(404, "Certificate not found")
-
-global_envs:
-* LOG_LEVEL (INFO)
+## Production
+TODO
 
 ## Environments
 | Key | Type | Required | Default | Description |
@@ -33,3 +22,9 @@ global_envs:
 | `CERTBOT_LOCK_FILE` | `str` | :x: | `/locks/certbot.lock` | TODO |
 | `AWS_ACCESS_KEY_ID` | `str` | :heavy_check_mark: | - | TODO |
 | `AWS_SECRET_ACCESS_KEY` | `str` | :heavy_check_mark: | - | TODO |
+
+# Notes
+before start gunicorn run:
+```
+gunicorn --check-config
+```
