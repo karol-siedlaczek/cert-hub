@@ -5,7 +5,6 @@ from typing import Any
 from enum import Enum
 
 class PermissionAction(Enum):
-    ALL = "*"
     READ = "read"
     ISSUE = "issue"
     RENEW = "renew"
