@@ -1,6 +1,6 @@
 # Cert registry
 
-## Developments
+## Development
 TODO
 
 ## Production
