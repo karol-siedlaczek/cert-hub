@@ -69,3 +69,5 @@ class Token:
             permissions.append(permission)
         
         return cls(token_value, allowed_ips, permissions)
+
+        

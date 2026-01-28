@@ -1,5 +1,8 @@
 import os
 import yaml
+import hmac
+import hashlib
+import base64
 from .require import Require
 from .cert import Cert
 from .token import Token
@@ -12,7 +15,7 @@ class ConfigError(RuntimeError):
 
 @dataclass(frozen=True)
 class Config:
-    REQUIRED_ENVS: ClassVar[set[str]] = { "aws_access_key_id", "aws_secret_access_key" }
+    REQUIRED_ENVS: ClassVar[set[str]] = { "hmac_key", "aws_access_key_id", "aws_secret_access_key" }
     ALLOWED_LOG_LEVELS: ClassVar[set[str]] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" }
     
     log_level: str = "INFO"
@@ -22,6 +25,7 @@ class Config:
     conf_file: str = "/config/config.yaml"
     certbot_bin: str = "/usr/bin/certbot"
     certbot_lock_file: str = "/locks/certbot.lock"
+    hmac_key: Optional[str] = None 
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     certs: list[Cert] = field(default_factory=list)
@@ -32,7 +36,7 @@ class Config:
         params: Dict[str, Any] = {}
         skip_env_params = { "certs", "tokens" }
         
-        # Load envs
+        # Load environments
         for f in fields(cls):
             if f.name in skip_env_params:
                 continue
@@ -52,24 +56,28 @@ class Config:
             raise ConfigError(f"Missing required environment variables: {', '.join(env.upper() for env in missing_envs)}")
         
         try:
+            Require.base64("HMAC_KEY", params["hmac_key"])
+        except ValueError as e:
+            raise ConfigError(e)
+        print(hmac.new(base64.b64decode(params["hmac_key"])))
+        
+        
+        try:
             conf_file = Require.file_exists(None, params["conf_file"])
         except ValueError:
-            raise ConfigError(f"Config file not found: {params['conf_file']}")
+            raise ConfigError(f"Not found config file: {params['conf_file']}")
         
         # Load YAML config
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
         except yaml.YAMLError as e:
-            raise ConfigError(f"Invalid YAML in {conf_file}: {e}")
+            raise ConfigError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
         
         try:
-            certs = cls._parse_certs(raw_conf.get("certs"))
-            tokens = cls._parse_tokens(raw_conf.get("tokens"))
+            params["certs"] = cls._parse_certs(raw_conf.get("certs"))
+            params["tokens"] = cls._parse_tokens(raw_conf.get("tokens"))
         except ValueError as e:
             raise ConfigError(f"Failed to parse '{conf_file}' config file: {e}")
-        
-        params["certs"] = certs
-        params["tokens"] = tokens
         
         return cls(**params)
 
