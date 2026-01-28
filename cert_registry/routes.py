@@ -1,4 +1,3 @@
-
 from .models.token import PermissionAction
 from flask import Blueprint, Response, jsonify, send_file, abort, request, current_app as app
 from .utils import require_api_access, build_response, run_cmd, get_conf
@@ -14,15 +13,21 @@ api = Blueprint("api", __name__)
 
 @api.route("/health", methods=["GET"])
 def health() -> Response:
-    # require_api_access(PermissionAction.HEALTH.value)
+    require_api_access(PermissionAction.HEALTH.value)
     conf = get_conf()
-    #certs_health = []
-    # print(conf.CERTS)
-    #for cert in conf.CERTS:
-    #    certs_health.append(cert["key"])
+    certs_health = []
+    print(conf.certs)
+    
+    for cert in conf.certs:
+        certs_health.append({ 
+            "key": cert.key, 
+            "status": "OK", 
+            "expireDate": "null" 
+        })
+    
     payload = {
         "health": "OK",
-    #    "certs": certs_health
+        "certs": certs_health
     }
     return build_response(code=200, data=payload)
 

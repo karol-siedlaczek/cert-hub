@@ -1,5 +1,7 @@
 import re
 import os
+import base64
+import binascii
 import ipaddress
 import importlib.util
 from pathlib import Path
@@ -31,7 +33,7 @@ class Require():
         match = re.fullmatch(pattern, str(val))
         if not match:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' does not match to '{pattern}' pattern",
+                default_msg=f"Value '{field}={val}' does not match to '{pattern}' pattern",
                 custom_msg=custom_msg
             )
         return match
@@ -45,7 +47,7 @@ class Require():
     ) -> None:
         if val < min_val:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is too small, minimal value is {min_val}",
+                default_msg=f"Value '{field}={val}' is too small, minimal value is {min_val}",
                 custom_msg=custom_msg
             )
     
@@ -58,7 +60,7 @@ class Require():
     ) -> None:
         if val > max_val:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is too big, maximum value is {max_val}",
+                default_msg=f"Value '{field}={val}' is too big, maximum value is {max_val}",
                 custom_msg=custom_msg
             )
 
@@ -76,7 +78,7 @@ class Require():
             Require.max(field, val, max_val)
         except ValueError as _:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is not valid port number, value is out of range ({min_val}-{max_val})",
+                default_msg=f"Value '{field}={val}' is not valid port number, value is out of range ({min_val}-{max_val})",
                 custom_msg=custom_msg
             )
 
@@ -104,7 +106,7 @@ class Require():
             ipaddress.ip_network(val, strict=False)
         except ValueError as e:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is invalid CIDR, details: {e}",
+                default_msg=f"Value '{field}={val}' is invalid CIDR, details: {e}",
                 custom_msg=custom_msg
             )
             
@@ -120,7 +122,7 @@ class Require():
             field=field,
             val=val,
             pattern=email_pattern,
-            custom_msg=custom_msg or f"Field '{field}={val}' is not a valid email address"
+            custom_msg=custom_msg or f"Value '{field}={val}' is not a valid email address"
         )
     
     @staticmethod
@@ -139,7 +141,7 @@ class Require():
             field=field,
             val=val,
             pattern=domain_pattern,
-            custom_msg=custom_msg or f"Field '{field}={val}' is not a valid domain"
+            custom_msg=custom_msg or f"Value '{field}={val}' is not a valid domain"
         )
     
     @staticmethod
@@ -151,23 +153,23 @@ class Require():
     ) -> None:
         if not isinstance(val, class_type):
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' has invalid type, must be a {class_type.__name__}",
+                default_msg=f"Value '{field}={val}' has invalid type, must be a {class_type.__name__}",
                 custom_msg=custom_msg
             )
     
-    @staticmethod
-    def file_path(
-        field: str, 
-        val: str, 
-        custom_msg: str | None = None
-    ) -> None:
-        try:
-            return Path(val).expanduser()
-        except Exception:
-            Require._raise_error(
-                default_msg=f"Field '{field}={val}' is not a valid path to a file",
-                custom_msg=custom_msg
-            )
+    # @staticmethod
+    # def file_path(
+    #     field: str, 
+    #     val: str, 
+    #     custom_msg: str | None = None
+    # ) -> None:
+    #     try:
+    #         return Path(val).expanduser()
+    #     except Exception:
+    #         Require._raise_error(
+    #             default_msg=f"Value '{field}={val}' is not a valid path to a file",
+    #             custom_msg=custom_msg
+    #         )
 
     @staticmethod 
     def file_exists(
@@ -177,7 +179,7 @@ class Require():
     ) -> Path:
         if not os.path.exists(val):
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' points to a file that does not exist",
+                default_msg=f"Value '{field}={val}' points to a file that does not exist",
                 custom_msg=custom_msg
             )
         return Path(val).expanduser()
@@ -191,7 +193,7 @@ class Require():
     ) -> None:
         if val not in allowed_values:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is invalid, allowed choices: {(', ').join(allowed_values)}",
+                default_msg=f"Value '{field}={val}' is invalid, allowed choices: {(', ').join(allowed_values)}",
                 custom_msg=custom_msg
             )
 
@@ -204,7 +206,7 @@ class Require():
     ) -> None:
         if val in not_allowed_values:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' is duplicated, cannot be one of: {(', ').join(not_allowed_values)}",
+                default_msg=f"Value '{field}={val}' is duplicated, cannot be one of: {(', ').join(not_allowed_values)}",
                 custom_msg=custom_msg
             )
     
@@ -217,7 +219,21 @@ class Require():
     ) -> None:
         if importlib.util.find_spec(module_name) is not None:
             Require._raise_error(
-                default_msg=f"Field '{field}={val}' requires module '{module_name}' to be installed",
+                default_msg=f"Value '{field}={val}' requires module '{module_name}' to be installed",
+                custom_msg=custom_msg
+            )
+            
+    @staticmethod
+    def base64(
+        field: str,
+        val: str, 
+        custom_msg: str | None = None
+    ) -> None:
+        try:
+            base64.b64decode(val, validate=True)
+        except binascii.Error:
+            Require._raise_error(
+                default_msg=f"Value '{field}={val}' is not decodable base64",
                 custom_msg=custom_msg
             )
 
