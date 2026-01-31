@@ -20,12 +20,12 @@ class PermissionAction(Enum):
     
     
 @dataclass(frozen=True)
-class TokenPermission:    
+class IdentityPermission:    
     scope: str
     action: str    
     
     @classmethod
-    def init(cls, index: int, permission: str) -> "TokenPermission":
+    def init(cls, index: int, permission: str) -> "IdentityPermission":
         allowed_actions_escaped = [re.escape(k) for k in PermissionAction.values()]
         permission_pattern = re.compile(rf'^(.*):(\*|{"|".join(allowed_actions_escaped)})$')
         permission = permission.strip()
@@ -43,30 +43,31 @@ class TokenPermission:
 
     
 @dataclass(frozen=True)
-class Token:
-    key: str
+class Identity:
+    id: str
     hmac_hex: str
     allowed_cidrs: list[str]
-    permissions: list[TokenPermission]
+    permissions: list[IdentityPermission]
      
+
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Token":
+    def from_dict(cls, data: dict[str, Any]) -> "Identity":
         def get_required(name: str) -> Any:
             val = data.get(name)
             Require.present(name, val)
             return val
         
-        key = get_required("key")
+        id = get_required("id")
         allowed_cidrs = get_required("allowed_cidrs")
         raw_permissions = get_required("permissions")
         permissions = []
         
-        Require.type("key", key, str)
-        Require.match("key", key, r'^[A-Z_0-9]*$')
+        Require.type("id", id, str)
+        Require.match("id", id, r'^[A-Za-z_0-9]*$')
         
-        hmac_env = f"TOKEN_{str(key).upper()}_HMAC"
+        hmac_env = f"TOKEN_{str(id).upper()}_HMAC"
         hmac_hex = Require.env(hmac_env)
-        Require.len(hmac_env, os.getenv(hmac_env), 64)
+        Require.min_len(hmac_env, os.getenv(hmac_env), 64)
         
         Require.type("allowed_cidrs", allowed_cidrs, list)
         for i, ip_addr in enumerate(allowed_cidrs):
@@ -74,13 +75,13 @@ class Token:
             
         Require.type("permissions", raw_permissions, list)
         for i, permission in enumerate(raw_permissions):
-            permission = TokenPermission.init(i, permission)
+            permission = IdentityPermission.init(i, permission)
             permissions.append(permission)
         
-        return cls(key, hmac_hex, allowed_cidrs, permissions)
+        return cls(id, hmac_hex, allowed_cidrs, permissions)
 
 
-    def is_secret_matches(self, hmac_key: bytes, token: str) -> bool:
+    def is_token_matches(self, hmac_key: bytes, token: str) -> bool:
         token_hmac_hex = hmac.new(hmac_key, token.encode("UTF-8"), sha256).hexdigest()
         return hmac.compare_digest(token_hmac_hex, self.hmac_hex)
     
@@ -100,4 +101,24 @@ class Token:
                 return True
         
         return False
+    
+    
+    def has_permission(self, scope: str | None = None, action: str | None = None) -> bool:
+        if not scope or not isinstance(scope, str):
+            return False
+        elif not action or action not in PermissionAction.values():
+            raise ValueError(f"Invalid action: {action}")
+        
+        scope = scope.strip()
+        action = action.strip()
+        
+        for p in self.permissions:
+            scope_ok = (p.scope == "*" or p.scope == scope)
+            action_ok = (p.action == "*" or p.action == action)
+            
+            if scope_ok and action_ok:
+                return True
+        
+        return False
+
         

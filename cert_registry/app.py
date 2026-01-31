@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
-from flask import Flask
+from flask import Flask, Response
 from .models.config import Config
 from .routes import api as api_blueprint
+from .utils import build_response, log_request
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -12,6 +13,7 @@ def create_app() -> Flask:
         
     setup_paths(config)
     setup_logging(config)
+    setup_error_handlers(app)
     app.register_blueprint(api_blueprint)
     
     return app
@@ -53,3 +55,15 @@ def setup_logging(config: Config) -> None:
         root.addHandler(f_handler)
 
     logging.getLogger(__name__).info("Logging initialized (level=%s)", level_name)
+
+
+def setup_error_handlers(app: Flask) -> None:
+    @app.errorhandler(404)
+    def handle_not_found(error) -> Response:
+        log_request(error, "warning")
+        return build_response(404, "Resource not found")
+    
+    @app.errorhandler(500)
+    def handle_internal_server_error(error) -> Response:
+        log_request(error, "error")
+        return build_response(500, "Internal server error")

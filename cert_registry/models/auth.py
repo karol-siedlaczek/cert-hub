@@ -1,43 +1,48 @@
-import ipaddress
+from dataclasses import dataclass
 from flask import Request
 from .config import Config
-from .error import AuthTokenError, AuthIpNotAllowedError
+from .identity import Identity
+from .error import AuthTokenMissingError, AuthFailedError
 
+@dataclass
 class Auth:
-    bearer_token: str
+    token: str
     remote_ip: str
+    identity: Identity
     
-    def __init__(self, request: Request, action: str, scope: str, conf: Config) -> None:
+    def __init__(self, request: Request, conf: Config, scope: str, action: str) -> None:
         auth_header = request.headers.get("Authorization", None)
         
         if not auth_header or auth_header == "":
-            raise AuthTokenError("Request header 'Authorization' is missing or empty")
-        
-        if not auth_header.startswith("Bearer "):
-            raise AuthTokenError("Request header 'Authorization' does not start with 'Bearer '")
+            raise AuthTokenMissingError("Missing or empty Authorization header")
+        elif not auth_header.startswith("Bearer "):
+            raise AuthTokenMissingError("Authorization header does not start with 'Bearer '")
         
         token_raw = auth_header[len("Bearer "):].strip()
     
         try:
-            token_key, token_secret = token_raw.split(".", 1)
-            if not token_key or not token_secret:
+            identity_id, identity_token = token_raw.split(".", 1)
+            if not identity_id or not identity_token:
                 raise ValueError()
         except ValueError:
-            raise AuthTokenError("Token has invalid format, expected: 'Authorization: Bearer <token_key>.<token_secret>'")
+            raise AuthFailedError("Invalid token format, expected: 'Authorization: Bearer <id>.<token>'")
         
-        token = next((t for t in conf.tokens if t.key == token_key), None)
+        self.token = identity_token
+        self.identity = next((i for i in conf.identities if i.id == identity_id), None)
         
-        if token is None:
-            raise AuthTokenError(f"Token with key '{token_key}' not found in configuration")
+        if self.identity is None :
+            raise AuthFailedError(f"Unknown identity '{identity_id}'")
+        elif not self.identity.is_token_matches(conf.hmac_key, identity_token):
+            raise AuthFailedError(f"Invalid token for identity '{identity_id}'")
         
-        remote_ip = self._get_remote_ip(request)
+        self.remote_ip = self._get_remote_ip(request)
         
-        if not token.is_ip_allowed(remote_ip):
-            raise AuthIpNotAllowedError(f"Access for '{remote_ip}' is forbidden")
+        if not self.identity.is_ip_allowed(self.remote_ip):
+            raise AuthFailedError(f"IP address '{self.remote_ip}' is not allowed for identity '{identity_id}'")
         
-        if not token.is_secret_matches(conf.hmac_key, token_secret):
-            raise AuthTokenError("Invalid token")
-
+        if not self.identity.has_permission(scope, action):
+            raise AuthFailedError(f"Permission denied for action '{action}' on scope '{scope}' for identity '{identity_id}'")
+        
     
     def _get_remote_ip(self, request: Request) -> str | None:
         if request.remote_addr:

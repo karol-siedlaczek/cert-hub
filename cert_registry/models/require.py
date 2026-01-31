@@ -66,7 +66,7 @@ class Require():
             )
     
     @staticmethod
-    def len(
+    def min_len(
         field: str,
         val: str,
         min_len: int,

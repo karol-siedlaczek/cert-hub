@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from .require import Require
-from typing import ClassVar, Any
+from typing import Any
 from enum import Enum
 
 class CertPlugin(Enum):
@@ -13,9 +13,9 @@ class CertPlugin(Enum):
 
 @dataclass(frozen=True)
 class Cert:   
-    key: str
+    id: str
     email: str
-    domains: tuple[str, ...]
+    domains: tuple[str, ...] # TODO - Do I need tuple?
     plugin: str
     
     @classmethod
@@ -25,12 +25,12 @@ class Cert:
             Require.present(name, val)
             return val
         
-        key = get_required("key")
+        id = get_required("id")
         email = get_required("email")
         domains = get_required("domains")
         plugin = get_required("plugin")
         
-        Require.type("key", key, str)
+        Require.type("id", id, str)
         Require.email("email", email)
         Require.one_of("plugin", plugin, CertPlugin.values())
         Require.installed_module("plugin", plugin, "certbot-dns-route53")
@@ -38,9 +38,4 @@ class Cert:
         for i, domain in enumerate(domains):
             Require.domain(f"domains[{i}]", domain)
         
-        return cls(
-            key=key,
-            email=email,
-            domains=tuple(domains),
-            plugin=plugin
-        )
+        return cls(id, email, tuple(domains), plugin)

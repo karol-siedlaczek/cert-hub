@@ -2,13 +2,13 @@ class ConfigError(RuntimeError):
     pass
 
 
-class AuthTokenError(RuntimeError):
+class AuthError(Exception):
     pass
 
 
-class AuthIpNotAllowedError(RuntimeError):
+class AuthTokenMissingError(AuthError):
     pass
 
 
-class AuthMissingPermission(RuntimeError):
+class AuthFailedError(AuthError):
     pass
