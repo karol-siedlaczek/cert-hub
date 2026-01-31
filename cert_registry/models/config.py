@@ -70,7 +70,7 @@ class Config:
         
         for i, item in enumerate(certs_raw):
             Require.type(f"certs[{i}]", item, dict)
-            Require.not_one_of(f"certs[{i}].id", item.get("id"), certs)
+            Require.not_one_of(f"certs[{i}].id", item.get("id"), [c.id for c in certs])
             try:
                 certs.append(Cert.from_dict(item))
             except Exception as e:
@@ -88,7 +88,7 @@ class Config:
         
         for i, item in enumerate(identities_raw):
             Require.type(f"identities[{i}]", item, dict)
-            Require.not_one_of(f"identities[{i}].id", item.get("id"), identities)
+            Require.not_one_of(f"identities[{i}].id", item.get("id"), [i.id for i in identities])
             try:
                 identities.append(Identity.from_dict(item))
             except Exception as e:
