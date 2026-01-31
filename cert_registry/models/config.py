@@ -1,21 +1,17 @@
 import os
 import yaml
-import hmac
-import hashlib
 import base64
+from hashlib import sha256
+from typing import Optional, ClassVar, Dict, Any
+from dataclasses import dataclass, fields, field
 from .require import Require
 from .cert import Cert
 from .token import Token
-from typing import Optional, ClassVar, Dict, Any
-from dataclasses import dataclass, fields, field
-
-class ConfigError(RuntimeError):
-    pass
-
+from .error import ConfigError
 
 @dataclass(frozen=True)
 class Config:
-    REQUIRED_ENVS: ClassVar[set[str]] = { "hmac_key", "aws_access_key_id", "aws_secret_access_key" }
+    REQUIRED_ENVS: ClassVar[set[str]] = { "HMAC_KEY_B64", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY" }
     ALLOWED_LOG_LEVELS: ClassVar[set[str]] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" }
     
     log_level: str = "INFO"
@@ -25,49 +21,33 @@ class Config:
     conf_file: str = "/config/config.yaml"
     certbot_bin: str = "/usr/bin/certbot"
     certbot_lock_file: str = "/locks/certbot.lock"
-    hmac_key: Optional[str] = None 
-    aws_access_key_id: Optional[str] = None
-    aws_secret_access_key: Optional[str] = None
+    hmac_key: bytes = None 
+    aws_access_key_id: str = None
+    aws_secret_access_key: str = None
     certs: list[Cert] = field(default_factory=list)
     tokens: list[Token] = field(default_factory=list)
     
     @classmethod
     def load(cls) -> "Config":
         params: Dict[str, Any] = {}
-        skip_env_params = { "certs", "tokens" }
+        skip_fields = ["certs", "tokens"]
         
         # Load environments
         for f in fields(cls):
-            if f.name in skip_env_params:
+            if f.name in skip_fields:
                 continue
             
             val = os.getenv(f.name.upper())
             if val is None:
                 val = f.default
             params[f.name] = val
+
+        Require.envs(cls.REQUIRED_ENVS)
+        Require.one_of("LOG_LEVEL", params["log_level"], cls.ALLOWED_LOG_LEVELS)
+        Require.base64("HMAC_KEY_B64", os.getenv("HMAC_KEY_B64"), 32)
+        conf_file = Require.file_exists("CONF_FILE", params["conf_file"])
+        params["hmac_key"] = base64.b64decode(os.getenv("HMAC_KEY_B64"), validate=True)
         
-        log_level = str(params.get("log_level", "INFO")).strip().upper()
-        if log_level not in cls.ALLOWED_LOG_LEVELS:
-            raise ConfigError(f"Invalid LOG_LEVEL={log_level}, allowed choices: {', '.join(cls.ALLOWED_LOG_LEVELS)}")
-        params["log_level"] = log_level
-        
-        missing_envs = [env for env in cls.REQUIRED_ENVS if not params.get(env)]
-        if missing_envs:
-            raise ConfigError(f"Missing required environment variables: {', '.join(env.upper() for env in missing_envs)}")
-        
-        try:
-            Require.base64("HMAC_KEY", params["hmac_key"])
-        except ValueError as e:
-            raise ConfigError(e)
-        print(hmac.new(base64.b64decode(params["hmac_key"])))
-        
-        
-        try:
-            conf_file = Require.file_exists(None, params["conf_file"])
-        except ValueError:
-            raise ConfigError(f"Not found config file: {params['conf_file']}")
-        
-        # Load YAML config
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
         except yaml.YAMLError as e:
@@ -76,7 +56,7 @@ class Config:
         try:
             params["certs"] = cls._parse_certs(raw_conf.get("certs"))
             params["tokens"] = cls._parse_tokens(raw_conf.get("tokens"))
-        except ValueError as e:
+        except Exception as e:
             raise ConfigError(f"Failed to parse '{conf_file}' config file: {e}")
         
         return cls(**params)
@@ -93,8 +73,8 @@ class Config:
             Require.not_one_of(f"certs[{i}].key", item.get("key"), certs)
             try:
                 certs.append(Cert.from_dict(item))
-            except ValueError as e:
-                raise ValueError(f"Error found at certs[{i}]: {e}")
+            except Exception as e:
+                raise ConfigError(f"Error found at certs[{i}]: {e}")
         
         return certs
     
@@ -107,9 +87,10 @@ class Config:
         tokens: list[Token] = []
         for i, item in enumerate(tokens_raw):
             Require.type(f"tokens[{i}]", item, dict)
+            Require.not_one_of(f"tokens[{i}].key", item.get("key"), tokens)
             try:
                 tokens.append(Token.from_dict(item))
-            except ValueError as e:
-                raise ValueError(f"Error found at tokens[{i}]: {e}")
+            except Exception as e:
+                raise ConfigError(f"Error found at tokens[{i}]: {e}")
         
         return tokens

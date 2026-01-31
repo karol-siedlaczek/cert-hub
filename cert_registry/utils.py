@@ -1,10 +1,15 @@
 import subprocess
+import logging
 from datetime import datetime, timezone
 from typing import cast, Any, NoReturn
 from http import HTTPStatus
 from flask import Response, abort, jsonify, g, request, current_app as app
 from .models.config import Config
+from .models.auth import Auth
+from .models.error import AuthTokenError, AuthMissingPermission, AuthIpNotAllowedError
 import hmac, hashlib
+
+log = logging.getLogger(__name__)
 
 def get_conf() -> Config:
     if "conf" not in g:
@@ -13,15 +18,24 @@ def get_conf() -> Config:
 
 
 def require_api_access(action: str, scope: str | None = None) -> None:
-    token = request.headers.get("X-API-Token", None)
-    print(token)
-    if not token or token == "":
+    try:
+        auth = Auth(request, action, scope, get_conf())
+    except AuthTokenError | AuthIpNotAllowedError | AuthMissingPermission as e:
+        log.warning(
+            "Authorization failed", # "Authorization failed: %s %s from %s (%s)"
+            extra={
+                "path": request.path,
+                "method": request.method,
+                "remote_addr": request.remote_addr,
+                "error_type": type(e).__name__,
+                "error_msg": e
+            }
+        )
         abort_response(401, error="Authorization is required to access this endpoint")
-    else:
-        src_addr = get_remote_ip()
-        conf = get_conf()
-        matched_token = [t for t in conf.tokens if t.value == token]
-        print(matched_token)
+    #else:
+    #    conf = get_conf()
+    #    matched_token = [t for t in conf.tokens if t.value == token]
+    #    print(matched_token)
         
         
         
@@ -42,13 +56,6 @@ def require_api_access(action: str, scope: str | None = None) -> None:
     #if token != expected:
     #    abort (401, "Unauthorized") # TODO - Make json
 
-
-def get_remote_ip() -> str | None:
-    if request.remote_addr:
-        return request.remote_addr
-    
-    xff = request.headers.get("X-Forwarder-For", "")
-    return xff.split(",")[0].strip() if xff else None
 
 
 def test(token: str, pepper: str) -> str:
