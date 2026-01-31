@@ -62,8 +62,3 @@ Generate HMAC_KEY:
 ```bash
 openssl rand -base64 32
 ```
-
-# For testing 
-```bash
-Cjsiv2JsX3b0i3MDlI7DFg7FiIaw+/79/fzFYkKhnjU=
-```

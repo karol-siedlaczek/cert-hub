@@ -44,7 +44,3 @@ class Cert:
             domains=tuple(domains),
             plugin=plugin
         )
-
-
-#class Cert:
-#    pass
