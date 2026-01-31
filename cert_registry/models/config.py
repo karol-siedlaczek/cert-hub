@@ -1,12 +1,11 @@
 import os
 import yaml
 import base64
-from hashlib import sha256
-from typing import Optional, ClassVar, Dict, Any
+from typing import ClassVar, Dict, Any
 from dataclasses import dataclass, fields, field
 from .require import Require
 from .cert import Cert
-from .token import Token
+from .identity import Identity
 from .error import ConfigError
 
 @dataclass(frozen=True)
@@ -25,12 +24,12 @@ class Config:
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
     certs: list[Cert] = field(default_factory=list)
-    tokens: list[Token] = field(default_factory=list)
+    identities: list[Identity] = field(default_factory=list)
     
     @classmethod
     def load(cls) -> "Config":
         params: Dict[str, Any] = {}
-        skip_fields = ["certs", "tokens"]
+        skip_fields = ["certs", "identities"]
         
         # Load environments
         for f in fields(cls):
@@ -55,7 +54,7 @@ class Config:
         
         try:
             params["certs"] = cls._parse_certs(raw_conf.get("certs"))
-            params["tokens"] = cls._parse_tokens(raw_conf.get("tokens"))
+            params["identities"] = cls._parse_identities(raw_conf.get("identities"))
         except Exception as e:
             raise ConfigError(f"Failed to parse '{conf_file}' config file: {e}")
         
@@ -65,12 +64,13 @@ class Config:
     def _parse_certs(certs_raw: Any) -> list[Cert]:
         if certs_raw is None:
             return []
-        Require.type("certs", certs_raw, list)
         
+        Require.type("certs", certs_raw, list)
         certs: list[Cert] = []
+        
         for i, item in enumerate(certs_raw):
             Require.type(f"certs[{i}]", item, dict)
-            Require.not_one_of(f"certs[{i}].key", item.get("key"), certs)
+            Require.not_one_of(f"certs[{i}].id", item.get("id"), certs)
             try:
                 certs.append(Cert.from_dict(item))
             except Exception as e:
@@ -79,18 +79,19 @@ class Config:
         return certs
     
     @staticmethod
-    def _parse_tokens(tokens_raw: Any) -> list[Token]:
-        if tokens_raw is None:
+    def _parse_identities(identities_raw: Any) -> list[Identity]:
+        if identities_raw is None:
             return []
-        Require.type("tokens", tokens_raw, list)
-
-        tokens: list[Token] = []
-        for i, item in enumerate(tokens_raw):
-            Require.type(f"tokens[{i}]", item, dict)
-            Require.not_one_of(f"tokens[{i}].key", item.get("key"), tokens)
-            try:
-                tokens.append(Token.from_dict(item))
-            except Exception as e:
-                raise ConfigError(f"Error found at tokens[{i}]: {e}")
         
-        return tokens
+        Require.type("identities", identities_raw, list)
+        identities: list[Identity] = []
+        
+        for i, item in enumerate(identities_raw):
+            Require.type(f"identities[{i}]", item, dict)
+            Require.not_one_of(f"identities[{i}].id", item.get("id"), identities)
+            try:
+                identities.append(Identity.from_dict(item))
+            except Exception as e:
+                raise ConfigError(f"Error found at identities[{i}]: {e}")
+        
+        return identities
