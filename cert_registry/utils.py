@@ -6,7 +6,7 @@ from http import HTTPStatus
 from flask import Response, abort, jsonify, g, request, current_app as app
 from .models.config import Config
 from .models.auth import Auth
-from .models.error import AuthError, AuthTokenMissingError
+from .models.error import AuthError, AuthFailedError
 
 log = logging.getLogger(__name__)
 
@@ -21,12 +21,12 @@ def require_auth(scope: str, action: str) -> None:
     try:
         auth = Auth(request, conf, scope, action)
     except AuthError as e:
-        log_request(f"Authorization failed ({type(e).__name__}): {e}", "warning")
-        
-        if isinstance(e, AuthTokenMissingError):
-            abort_response(401, msg="Authorization is required", error=str(e))
-        else:
-            abort_response(403, msg="Authorization failed")
+        log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", "warning")
+        abort_response(
+            code=e.code, 
+            msg=e.msg, 
+            detail=None if isinstance(e, AuthFailedError) else e.detail
+        )
     
     return auth
 
@@ -39,7 +39,7 @@ def log_request(msg: str, level: str = "info") -> None:
     log_fn(f"{request.remote_addr} {request.method} {request.path} {msg}")
 
 
-def build_response(code: int = 200, data: Any = None, msg: str | None = None, error: str | None = None) -> Response:
+def build_response(code: int = 200, data: Any = None, msg: str | None = None, detail: str | None = None) -> Response:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": HTTPStatus(code).phrase,
@@ -49,8 +49,8 @@ def build_response(code: int = 200, data: Any = None, msg: str | None = None, er
     
     if msg is not None:
         payload["message"] = msg
-    if error is not None:
-        payload["error"] = error
+    if detail is not None:
+        payload["detail"] = detail
     if data is not None:
         payload["data"] = data
     
@@ -59,8 +59,8 @@ def build_response(code: int = 200, data: Any = None, msg: str | None = None, er
     return response
 
 
-def abort_response(code: int, msg: str, error: str | None = None) -> NoReturn:
-    abort(build_response(code=code, msg=msg, error=error))
+def abort_response(code: int, msg: str, detail: str | None = None) -> NoReturn:
+    abort(build_response(code=code, msg=msg, detail=detail))
     
 
 def run_cmd(cmd: str, check: bool=True) -> str:
