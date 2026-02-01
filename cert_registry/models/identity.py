@@ -25,8 +25,8 @@ class IdentityPermission:
     action: str    
     
     @classmethod
-    def init(cls, index: int, permission: str) -> "IdentityPermission":
-        allowed_actions_escaped = [re.escape(k) for k in PermissionAction.values()]
+    def from_string(cls, index: int, permission: str) -> "IdentityPermission":
+        allowed_actions_escaped = [re.escape(v) for v in PermissionAction.values()]
         permission_pattern = re.compile(rf'^(.*):(\*|{"|".join(allowed_actions_escaped)})$')
         permission = permission.strip()
         
@@ -75,7 +75,7 @@ class Identity:
             
         Require.type("permissions", raw_permissions, list)
         for i, permission in enumerate(raw_permissions):
-            permission = IdentityPermission.init(i, permission)
+            permission = IdentityPermission.from_string(i, permission)
             permissions.append(permission)
         
         return cls(id, hmac_hex, allowed_cidrs, permissions)
