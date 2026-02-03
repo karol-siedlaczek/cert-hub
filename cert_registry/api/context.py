@@ -44,7 +44,7 @@ class Context():
             requested_scopes = set(scopes)
             cert_map = { c.id: c for c in conf.certs }
             
-            for index, scope_pattern in enumerate(requested_scopes):
+            for scope_pattern in enumerate(requested_scopes):
                 if scope_pattern in cert_map:
                     matched_cert_ids.add(scope_pattern)
                     continue
@@ -62,6 +62,7 @@ class Context():
                 if cert.id in matched_cert_ids and cert.has_permission(identity, action):
                     selected_certs.append(cert)
                 
+        # TODO - It probably does not make sense when enforce_auth is false, so delete below or add condition
         if not selected_certs:
             abort_response(404, msg="Not found any certificate", detail={ "scopes": list(requested_scopes), "action": action.value })
                 
