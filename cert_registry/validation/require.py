@@ -4,7 +4,7 @@ import base64
 import binascii
 import ipaddress
 import importlib.util
-from .error import ConfigError
+from cert_registry.errors.validation_error import ValidationError
 from pathlib import Path
 from typing import Any, Match, Type, TypeVar, Pattern, Iterable
 
@@ -280,4 +280,4 @@ class Require():
         default_err: str, 
         custom_err: str | None = None
     ) -> None:
-        raise ConfigError(custom_err or default_err)
+        raise ValidationError(custom_err or default_err)

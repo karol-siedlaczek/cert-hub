@@ -1,13 +1,14 @@
-class ConfigError(RuntimeError):
-    pass
-
-
 class AuthError(Exception):
     code: int
     msg: str
     detail: str
     
-    def __init__(self, code: int, msg: str, detail: str | None = None) -> None:
+    def __init__(
+        self, 
+        code: int, 
+        msg: str, 
+        detail: str | None = None
+    ) -> None:
         self.code = code
         self.msg = msg
         self.detail = detail
@@ -29,8 +30,11 @@ class AuthIpNotAllowedError(AuthError):
         super().__init__(403, "Access denied", f"Request from IP address '{ip_addr}' is not permitted for this identity")
 
 
-class AuthPermissionDeniedError(AuthError):
-    def __init__(self, scope: str, action: str) -> None:
-        super().__init__(403, "Permission denied", f"Action '{action}' is not permitted on scope '{scope}' for this identity")
+# class AuthPermissionDeniedError(AuthError):
+#     def __init__(self, scope: str, action: str) -> None:
+#         super().__init__(403, "Permission denied", f"Action '{action}' is not permitted on scope '{scope}' for this identity")
 
 
+# class AuthInvalidScopeError(AuthError):
+#     def __init__(self, scope: str) -> None:
+#         super().__init__(404, "Cert not found", f"Scope '{scope}' does not match to any cert in configuration")
