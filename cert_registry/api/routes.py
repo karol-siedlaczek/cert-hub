@@ -13,7 +13,7 @@ api = Blueprint("api", __name__)
 def health() -> Response:
     certs = query_list("cert", required=True)
     ctx = Context.build(certs, PermissionAction.HEALTH)
-    
+
     certs_health = []
 
     print("context:")

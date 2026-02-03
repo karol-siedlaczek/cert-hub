@@ -59,10 +59,7 @@ class Cert:
             if permission.action != PermissionAction.ANY and permission.action != action:
                 continue
             
-            if permission.scope == "*":
-                return True
-            
-            if permission.scope == self.id:
+            if permission.scope == "*" or permission.scope == self.id:
                 return True
             
             try:

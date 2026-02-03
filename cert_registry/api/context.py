@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 from flask import request
+from typing import Pattern
 from cert_registry.errors.auth_error import AuthError, AuthFailedError
 from cert_registry.api.auth import require_auth
 from cert_registry.api.helpers import get_conf, abort_response, log_request
@@ -50,7 +51,7 @@ class Context():
                     continue
                 
                 try:
-                    match = re.compile(scope_pattern)
+                    match: Pattern = re.compile(scope_pattern)
                 except re.error as e:
                     abort_response(400, msg=f"Invalid cert scope pattern", detail={ "pattern": scope_pattern, "error": str(e) })
                 
