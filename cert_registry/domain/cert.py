@@ -1,10 +1,14 @@
 import re
+import logging
 from typing import Any
 from enum import Enum
 from dataclasses import dataclass
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.identity import Identity
 from cert_registry.validation.require import Require
+
+log = logging.getLogger(__name__)
+
 
 class CertPlugin(Enum):
     DNS_ROUTE_53 = "dns-route53"
@@ -46,6 +50,8 @@ class Cert:
 
     
     def has_permission(self, identity: Identity, action: PermissionAction) -> bool:
+        log.debug(f"Perform permission check (cert='{self.id}'; identity='{identity.id}'; action='{action.value}')")
+        
         if not identity:
             return False
         
