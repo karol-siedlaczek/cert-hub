@@ -3,10 +3,10 @@ import yaml
 import base64
 from typing import ClassVar, Dict, Any
 from dataclasses import dataclass, fields, field
-from .require import Require
-from .cert import Cert
-from .identity import Identity
-from .error import ConfigError
+from cert_registry.validation.require import Require
+from cert_registry.domain.cert import Cert
+from cert_registry.domain.identity import Identity
+from cert_registry.errors.validation_error import ValidationError
 
 @dataclass(frozen=True)
 class Config:
@@ -50,13 +50,13 @@ class Config:
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
         except yaml.YAMLError as e:
-            raise ConfigError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
+            raise ValidationError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
         
         try:
             params["certs"] = cls._parse_certs(raw_conf.get("certs"))
             params["identities"] = cls._parse_identities(raw_conf.get("identities"))
         except Exception as e:
-            raise ConfigError(f"Failed to parse '{conf_file}' config file: {e}")
+            raise ValidationError(f"Failed to parse '{conf_file}' config file: {e}")
         
         return cls(**params)
 
@@ -74,7 +74,7 @@ class Config:
             try:
                 certs.append(Cert.from_dict(item))
             except Exception as e:
-                raise ConfigError(f"Error found at certs[{i}]: {e}")
+                raise ValidationError(f"Error found at certs[{i}]: {e}")
         
         return certs
     
@@ -92,6 +92,6 @@ class Config:
             try:
                 identities.append(Identity.from_dict(item))
             except Exception as e:
-                raise ConfigError(f"Error found at identities[{i}]: {e}")
+                raise ValidationError(f"Error found at identities[{i}]: {e}")
         
         return identities

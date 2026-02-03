@@ -1,6 +1,6 @@
 import os
 from cert_registry.app import create_app
-from cert_registry.models.require import Require
+from cert_registry.validation.require import Require
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 bind_ip = os.getenv("GUNICORN_BIND_IP")

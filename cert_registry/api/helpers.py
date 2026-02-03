@@ -4,11 +4,10 @@ from datetime import datetime, timezone
 from typing import cast, Any, NoReturn
 from http import HTTPStatus
 from flask import Response, abort, jsonify, g, request, current_app as app
-from .models.config import Config
-from .models.auth import Auth
-from .models.error import AuthError, AuthFailedError
+from cert_registry.conf.config import Config
 
 log = logging.getLogger(__name__)
+
 
 def get_conf() -> Config:
     if "conf" not in g:
@@ -16,30 +15,32 @@ def get_conf() -> Config:
     return g.conf
 
 
-def require_auth(scope: str, action: str) -> None:
-    conf = get_conf()
-    try:
-        auth = Auth(request, conf, scope, action)
-    except AuthError as e:
-        log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", "warning")
-        abort_response(
-            code=e.code, 
-            msg=e.msg, 
-            detail=None if isinstance(e, AuthFailedError) else e.detail
-        )
-    
-    return auth
-
-
 def log_request(msg: str, level: str = "info") -> None:
     level = level.lower()
     log_fn = getattr(log, level, None)
+    
     if not callable(log_fn):
         raise ValueError(f"Invalid log level: {level}")
     log_fn(f"{request.remote_addr} {request.method} {request.path} {msg}")
 
 
-def build_response(code: int = 200, data: Any = None, msg: str | None = None, detail: str | None = None) -> Response:
+def abort_response(
+    code: int,
+    *,
+    msg: str, 
+    detail: Any | None = None
+) -> NoReturn:
+    response = build_response(code, msg=msg, detail=detail)
+    abort(response)
+
+
+def build_response(
+    code: int = 200,
+    *,
+    msg: str | None = None,
+    data: Any = None, 
+    detail: Any | None = None
+) -> Response:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": HTTPStatus(code).phrase,
@@ -58,12 +59,8 @@ def build_response(code: int = 200, data: Any = None, msg: str | None = None, de
     response.status_code = code
     return response
 
-
-def abort_response(code: int, msg: str, detail: str | None = None) -> NoReturn:
-    abort(build_response(code=code, msg=msg, detail=detail))
     
-
-def run_cmd(cmd: str, check: bool=True) -> str:
+def run_cmd(cmd: str, check: bool = True) -> str:
     process = subprocess.run(
         cmd, 
         shell=True, 

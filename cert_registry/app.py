@@ -1,9 +1,9 @@
 import logging
 from pathlib import Path
 from flask import Flask, Response
-from .models.config import Config
-from .routes import api as api_blueprint
-from .utils import build_response, log_request
+from cert_registry.conf.config import Config
+from cert_registry.api.routes import api as api_blueprint
+from cert_registry.api.helpers import build_response, log_request
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -61,9 +61,9 @@ def setup_error_handlers(app: Flask) -> None:
     @app.errorhandler(404)
     def handle_not_found(error) -> Response:
         log_request(error, "warning")
-        return build_response(404, "Resource not found")
+        return build_response(404, msg="Resource not found")
     
     @app.errorhandler(500)
     def handle_internal_server_error(error) -> Response:
         log_request(error, "error")
-        return build_response(500, "Internal server error")
+        return build_response(500, msg="Internal server error")
