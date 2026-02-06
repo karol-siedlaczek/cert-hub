@@ -19,17 +19,10 @@ class ApiError(Exception):
 class InvalidRequestError(ApiError):
     def __init__(
         self,
-        *,
         msg: str,
+        *,
         detail: str | None = None
     ) -> None:
-        super.__init__(400, msg=msg, detail=detail)
+        super().__init__(400, msg=msg, detail=detail)
 
 
-
-class InvalidCertScopeError(ApiError):
-    pass
-
-
-class NotFoundCertError(ApiError):
-    pass

@@ -2,9 +2,9 @@ import re
 from dataclasses import dataclass
 from flask import request
 from typing import Pattern
-from cert_registry.errors.auth_error import AuthError, AuthFailedError
+from cert_registry.errors.api_error import ApiError
 from cert_registry.api.auth import require_auth
-from cert_registry.api.helpers import get_conf, abort_response, log_request
+from cert_registry.api.helpers import get_conf, abort_response
 from cert_registry.domain.identity import Identity
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.cert import Cert
@@ -19,33 +19,24 @@ class Context():
     def build(
         cls,
         scopes: str | list[str], 
-        action: PermissionAction,
-        *,
-        enforce_auth: bool = True
+        action: PermissionAction
     ) -> "Context":
-        conf = get_conf()
         remote_ip = Context.get_remote_ip()
-        identity = None
-        
-        if enforce_auth:
-            try:
-                identity = require_auth(remote_ip)
-            except AuthError as e:
-                log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", "warning")
-                abort_response(e.code, msg=e.msg, detail=None if isinstance(e, AuthFailedError) else e.detail)
-        
+        identity = require_auth(remote_ip)
+
         selected_certs = []
-        
+        requested_scopes = set(scopes)
+        conf = get_conf()
+    
         if "*" in scopes:
             for cert in conf.certs:
                 if cert.has_permission(identity, action):
                     selected_certs.append(cert)
         else:
             matched_cert_ids: set[str] = set()
-            requested_scopes = set(scopes)
             cert_map = { c.id: c for c in conf.certs }
             
-            for scope_pattern in enumerate(requested_scopes):
+            for scope_pattern in requested_scopes:
                 if scope_pattern in cert_map:
                     matched_cert_ids.add(scope_pattern)
                     continue
@@ -63,9 +54,8 @@ class Context():
                 if cert.id in matched_cert_ids and cert.has_permission(identity, action):
                     selected_certs.append(cert)
                 
-        # TODO - It probably does not make sense when enforce_auth is false, so delete below or add condition
         if not selected_certs:
-            abort_response(404, msg="Not found any certificate", detail={ "scopes": list(requested_scopes), "action": action.value })
+            raise ApiError(404, msg="Not found any certificate for selected scope and action", detail={ "scope": list(requested_scopes), "action": action.value })
                 
         return cls(remote_ip, identity, selected_certs)
     

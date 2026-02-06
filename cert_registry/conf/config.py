@@ -1,6 +1,7 @@
 import os
 import yaml
 import base64
+from pathlib import Path
 from typing import ClassVar, Dict, Any
 from dataclasses import dataclass, fields, field
 from cert_registry.validation.require import Require
@@ -15,11 +16,14 @@ class Config:
     
     log_level: str = "INFO"
     acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
-    certs_dir: str = "/certs"
     logs_dir: str = "/logs"
     conf_file: str = "/config/config.yaml"
     certbot_bin: str = "/usr/bin/certbot"
-    certbot_lock_file: str = "/locks/certbot.lock"
+    certbot_dir: str = "/letsencrypt"
+    certbot_work_dir: str = None
+    certbot_logs_dir: str = None
+    certbot_conf_dir: str = None
+    certbot_lock_dir: str = None
     hmac_key: bytes = None 
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
@@ -29,7 +33,7 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         params: Dict[str, Any] = {}
-        skip_fields = ["certs", "identities"]
+        skip_fields = ["certs", "identities", "certbot_work_dir", "certbot_logs_dir", "certbot_conf_dir", "certbot_lock_dir"]
         
         # Load environments
         for f in fields(cls):
@@ -42,10 +46,17 @@ class Config:
             params[f.name] = val
 
         Require.envs(cls.REQUIRED_ENVS)
+        Require.file_exists("CERTBOT_BIN", params["certbot_bin"])
         Require.one_of("LOG_LEVEL", params["log_level"], cls.ALLOWED_LOG_LEVELS)
         Require.base64("HMAC_KEY_B64", os.getenv("HMAC_KEY_B64"), 32)
         conf_file = Require.file_exists("CONF_FILE", params["conf_file"])
         params["hmac_key"] = base64.b64decode(os.getenv("HMAC_KEY_B64"), validate=True)
+        
+        certbot_base_dir = Path(params["certbot_dir"])
+        params["certbot_work_dir"] = f"{certbot_base_dir}/work"
+        params["certbot_logs_dir"] = f"{certbot_base_dir}/logs"
+        params["certbot_conf_dir"] = f"{certbot_base_dir}/config"
+        params["certbot_lock_dir"] = f"{certbot_base_dir}/lock"
         
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
@@ -53,15 +64,15 @@ class Config:
             raise ValidationError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
         
         try:
-            params["certs"] = cls._parse_certs(raw_conf.get("certs"))
+            params["certs"] = cls._parse_certs(raw_conf.get("certs"), params["certbot_conf_dir"])
             params["identities"] = cls._parse_identities(raw_conf.get("identities"))
-        except Exception as e:
+        except ValidationError as e:
             raise ValidationError(f"Failed to parse '{conf_file}' config file: {e}")
         
         return cls(**params)
 
     @staticmethod
-    def _parse_certs(certs_raw: Any) -> list[Cert]:
+    def _parse_certs(certs_raw: Any, certbot_conf_dir: str) -> list[Cert]:
         if certs_raw is None:
             return []
         
@@ -72,8 +83,8 @@ class Config:
             Require.type(f"certs[{i}]", item, dict)
             Require.not_one_of(f"certs[{i}].id", item.get("id"), [c.id for c in certs])
             try:
-                certs.append(Cert.from_dict(item))
-            except Exception as e:
+                certs.append(Cert.from_dict(item, Path(certbot_conf_dir)))
+            except ValidationError as e:
                 raise ValidationError(f"Error found at certs[{i}]: {e}")
         
         return certs
@@ -91,7 +102,7 @@ class Config:
             Require.not_one_of(f"identities[{i}].id", item.get("id"), [i.id for i in identities])
             try:
                 identities.append(Identity.from_dict(item))
-            except Exception as e:
+            except ValidationError as e:
                 raise ValidationError(f"Error found at identities[{i}]: {e}")
         
         return identities

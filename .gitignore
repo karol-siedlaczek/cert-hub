@@ -209,9 +209,7 @@ __marimo__/
 .vscode
 logs
 logs/*
-locks
-locks/*
-certs
-certs/*
+letsencrypt
+letsencrypt/*
 .envrc
 config.yaml

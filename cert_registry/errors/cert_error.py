@@ -1,0 +1,2 @@
+class CertNotIssuedException(Exception):
+    pass
