@@ -1,11 +1,8 @@
 from flask import request
-from typing import Any, Callable, TypeVar, NoReturn
-from cert_registry.api.helpers import abort_response
+from typing import Any, Callable, TypeVar
+from cert_registry.errors.api_error import InvalidRequestError
 
 T = TypeVar("T")
-
-
-# TODO - CHange to raise ApiInvalidRequestError
 
 def query_list(
     name: str, 
@@ -18,17 +15,10 @@ def query_list(
     if strip:
         vals = [v.strip() for v in vals if isinstance(v, str)]
     
-    vals = [v for v in vals if v] # Remove empty
+    vals = [v for v in vals if v] # Remove empty values
     
     if required and not vals:
-        abort_response(
-            400,
-            msg="Missing required query parameter",
-            detail={
-                "parameter": name,
-                "example": f"?{name}=val_1&{name}=val_2"
-            }
-        )
+        raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name, "example": f"?{name}=val_1&{name}=val_2" })
 
     if allow_star and "*" in vals:
         return ["*"]
@@ -45,7 +35,7 @@ def query_str(
     
     if val is None or val == "*":
         if required:
-            abort_response(400, msg="Missing required query parameter", detail={ "parameter": name })
+            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
         return None
     
     return str(val).strip()
@@ -62,18 +52,18 @@ def query_int(
     
     if raw_val is None or raw_val == "":
         if required:
-            abort_response(400, msg="Missing required query parameter", detail={ "parameter": name })
+            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
         return None
     
     try:
         val = int(raw_val)
     except ValueError:
-        abort_response(400, msg="Invalid query parameter", detail={ "parameter": name, "expected": "integer" })
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expecter": "integer" })
     
     if min_val is not None and val < min_val:
-        abort_response(400, msg="Invalid query parameter", detail={ "parameter": name, "min": min_val })
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "min": min_val })
     if max_val is not None and val > max_val:
-        abort_response(400, msg="Invalid query parameter", detail={ "parameter": name, "max": max_val })
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "max": max_val })
     
     return val
 
@@ -86,11 +76,11 @@ def json_body(
     
     if data is None:
         if required:
-            abort_response(400, msg="Missing JSON body", detail={ "expected": "application/json" })
+            raise InvalidRequestError("Missing JSON body", detail={ "expected": "application/json" })
         return {}
     
     if not isinstance(data, dict):
-        abort_response(400, msg="Invalid JSON body", detail={ "expected": "JSON object"})
+        raise InvalidRequestError("Invalid JSON body", detail={ "expected", "JSON object" })
     
     return data
 
@@ -104,7 +94,7 @@ def json_body_field(
 ) -> T | Any | None:
     if name not in data or data[name] in (None, ""):
         if required:
-            abort_response(400, msg="Missing required JSON field in body", detail={ "field": name })
+            raise InvalidRequestError("Missing required JSON field in body", detail={ "field": name })
         return None
     
     val: Any = data[name]
@@ -114,11 +104,6 @@ def json_body_field(
     try:
         return cast_fn(val)
     except Exception:
-        abort_response(
-            400, 
-            msg="Invalid JSON field in body", 
-            detail={
-                "field": name, 
-                "expected": getattr(cast_fn, "__name__", "value")
-            }
-        )
+        expected_type = getattr(cast_fn, "__name__", "value")
+        raise InvalidRequestError("Invalid JSON field in body", detail={ "field": name, "expected": expected_type })
+
