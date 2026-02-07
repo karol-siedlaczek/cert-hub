@@ -9,6 +9,7 @@ from cert_registry.domain.cert import Cert
 from cert_registry.domain.identity import Identity
 from cert_registry.errors.validation_error import ValidationError
 
+
 @dataclass(frozen=True)
 class Config:
     REQUIRED_ENVS: ClassVar[set[str]] = { "HMAC_KEY_B64", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY" }
@@ -16,14 +17,14 @@ class Config:
     
     log_level: str = "INFO"
     acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
-    logs_dir: str = "/logs"
-    conf_file: str = "/config/config.yaml"
-    certbot_bin: str = "/usr/bin/certbot"
-    certbot_dir: str = "/letsencrypt"
-    certbot_work_dir: str = None
-    certbot_logs_dir: str = None
-    certbot_conf_dir: str = None
-    certbot_lock_dir: str = None
+    logs_dir: Path = "/logs"
+    conf_file: Path = "/config/config.yaml"
+    certbot_bin: Path = "/usr/bin/certbot"
+    certbot_dir: Path = "/letsencrypt"
+    certbot_work_dir: Path = None
+    certbot_logs_dir: Path = None
+    certbot_conf_dir: Path = None
+    certbot_lock_dir: Path = None
     hmac_key: bytes = None 
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
@@ -43,6 +44,8 @@ class Config:
             val = os.getenv(f.name.upper())
             if val is None:
                 val = f.default
+            if f.type is Path:
+                val = Path(val)
             params[f.name] = val
 
         Require.envs(cls.REQUIRED_ENVS)
@@ -53,10 +56,10 @@ class Config:
         params["hmac_key"] = base64.b64decode(os.getenv("HMAC_KEY_B64"), validate=True)
         
         certbot_base_dir = Path(params["certbot_dir"])
-        params["certbot_work_dir"] = f"{certbot_base_dir}/work"
-        params["certbot_logs_dir"] = f"{certbot_base_dir}/logs"
-        params["certbot_conf_dir"] = f"{certbot_base_dir}/config"
-        params["certbot_lock_dir"] = f"{certbot_base_dir}/lock"
+        params["certbot_work_dir"] = certbot_base_dir / "work"
+        params["certbot_logs_dir"] = certbot_base_dir / "logs"
+        params["certbot_conf_dir"] = certbot_base_dir / "config"
+        params["certbot_lock_dir"] = certbot_base_dir / "lock"
         
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
@@ -106,3 +109,6 @@ class Config:
                 raise ValidationError(f"Error found at identities[{i}]: {e}")
         
         return identities
+
+
+

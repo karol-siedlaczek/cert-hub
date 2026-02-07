@@ -1,9 +1,9 @@
 
 import os
-from flask import Blueprint, Response, jsonify
+from flask import Blueprint, Response
 from cert_registry.api.context import Context
 from cert_registry.api.validators import query_list
-from cert_registry.api.helpers import build_response, abort_response, run_cmd, get_conf, acquire_lock, release_lock
+from cert_registry.api.helpers import build_response, abort_response, acquire_lock, release_lock, get_conf
 from cert_registry.domain.permission import PermissionAction
 
 api = Blueprint("api", __name__)
@@ -19,8 +19,8 @@ def health() -> Response:
     for cert in ctx.certs:
         certs_health.append({ 
             "id": cert.id, 
-            "status": "NOT_ISSUED", 
-            "expireDate": "null" 
+            "status": cert.get_status(), 
+            "expireDate": cert.get_expire_date()
         })
     
     return build_response(200, data={ "health": "OK", "certs": certs_health })
@@ -37,30 +37,14 @@ def issue_cert() -> Response:
     
     try:
         for cert in ctx.certs:
-
-            cmd = [
-                conf.certbot_bin, "certonly",
-                f"--{cert.plugin.value}",
-                "--cert-name", cert.id,
-                "--agree-tos",
-                "-d", (',').join(cert.domains),
-                "--email", cert.email,
-                "--non-interactive",
-                "--server", conf.acme_server,
-                "--config-dir", conf.certbot_conf_dir,
-                "--work-dir", conf.certbot_work_dir,
-                "--logs-dir", conf.certbot_logs_dir,
-                "--test-cert",
-                "--max-log-backups", "100"
-                "--issuance-timeout", "90",
-                "--dry-run"
-                #"--quiet"
-                #"--force-renewal"
-            ]
-            #print(cmd)
-            print((" ").join(cmd))
-            # result = run_cmd(cmd, check=True)  
-            # print(result)
+            if cert.is_to_renew():
+                cert.issue(
+                    conf.acme_server, 
+                    conf.certbot_bin, 
+                    conf.certbot_conf_dir, 
+                    conf.certbot_work_dir, 
+                    conf.certbot_logs_dir
+                )
     finally:
         pass
         #release_lock()
@@ -71,12 +55,24 @@ def issue_cert() -> Response:
 
 @api.route("/api/certs/renew", methods=["POST"])
 def renew_certs() -> Response:
-    #require_auth("domain", PermissionAction.RENEW)
+    certs = query_list("cert", required=True)
+    ctx = Context.build(certs, PermissionAction.RENEW)
     
-    return jsonify(method="TODO - renew_certs")
+    return build_response(200, msg="TODO - renew_cert")
 
 
-@api.route("/api/certs/", methods=["GET"])
+@api.route("/api/certs", methods=["GET"])
 def get_cert() -> Response:
-    #require_auth("domain", PermissionAction.READ)
-    return jsonify(method="TODO - get_cert")
+    certs = query_list("cert", required=True)
+    ctx = Context.build(certs, PermissionAction.READ)
+    payload = {}
+    
+    for cert in ctx.certs:
+        payload[cert.id] = {
+            "chain.pem": cert.get_chain(),
+            "cert.pem": cert.get_cert(),
+            "privkey.pem": cert.get_private_key(),
+            "expire_date": cert.get_expire_date()
+        }
+    
+    return build_response(200, msg="TODO - get_cert", data=payload)
