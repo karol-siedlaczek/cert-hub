@@ -3,8 +3,7 @@ from dataclasses import dataclass
 from flask import request
 from typing import Pattern
 from cert_registry.errors.api_error import ApiError
-from cert_registry.api.auth import require_auth
-from cert_registry.api.helpers import get_conf, abort_response
+from cert_registry.api.helpers import get_conf, require_auth
 from cert_registry.domain.identity import Identity
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.cert import Cert
@@ -44,7 +43,7 @@ class Context():
                 try:
                     match: Pattern = re.compile(scope_pattern)
                 except re.error as e:
-                    abort_response(400, msg=f"Invalid cert scope pattern", detail={ "pattern": scope_pattern, "error": str(e) })
+                    raise ApiError(400, msg=f"Invalid cert scope pattern", detail={ "pattern": scope_pattern, "error": str(e) })
                 
                 for cert_id in cert_map.keys():
                     if match.fullmatch(cert_id):
