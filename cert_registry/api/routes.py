@@ -19,7 +19,7 @@ def health() -> Response:
     for cert in ctx.certs:
         certs_health.append({ 
             "id": cert.id, 
-            "status": cert.get_status(), 
+            "status": cert.get_status().value, 
             "expireDate": cert.get_expire_date()
         })
     
@@ -37,7 +37,7 @@ def issue_cert() -> Response:
     
     try:
         for cert in ctx.certs:
-            if cert.is_to_renew():
+            if not cert.is_issued():
                 cert.issue(
                     conf.acme_server, 
                     conf.certbot_bin, 
