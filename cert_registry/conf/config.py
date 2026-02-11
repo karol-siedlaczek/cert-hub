@@ -9,22 +9,22 @@ from cert_registry.domain.cert import Cert
 from cert_registry.domain.identity import Identity
 from cert_registry.errors.validation_error import ValidationError
 
-
 @dataclass(frozen=True)
 class Config:
     REQUIRED_ENVS: ClassVar[set[str]] = { "HMAC_KEY_B64", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY" }
     ALLOWED_LOG_LEVELS: ClassVar[set[str]] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" }
     
     log_level: str = "INFO"
-    acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
     logs_dir: Path = "/logs"
     conf_file: Path = "/config/config.yaml"
+    certbot_acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
     certbot_bin: Path = "/usr/bin/certbot"
     certbot_dir: Path = "/letsencrypt"
-    certbot_work_dir: Path = None
-    certbot_logs_dir: Path = None
-    certbot_conf_dir: Path = None
-    certbot_lock_dir: Path = None
+    certbot_renew_before_days: int = 30
+    # certbot_work_dir: Path = None
+    # certbot_logs_dir: Path = None
+    # certbot_conf_dir: Path = None
+    # certbot_lock_dir: Path = None
     hmac_key: bytes = None 
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
@@ -34,7 +34,7 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         params: Dict[str, Any] = {}
-        skip_fields = ["certs", "identities", "certbot_work_dir", "certbot_logs_dir", "certbot_conf_dir", "certbot_lock_dir"]
+        skip_fields = ["certs", "identities"] # "certbot_work_dir", "certbot_logs_dir", "certbot_conf_dir", "certbot_lock_dir"
         
         # Load environments
         for f in fields(cls):
@@ -52,14 +52,19 @@ class Config:
         Require.file_exists("CERTBOT_BIN", params["certbot_bin"])
         Require.one_of("LOG_LEVEL", params["log_level"], cls.ALLOWED_LOG_LEVELS)
         Require.base64("HMAC_KEY_B64", os.getenv("HMAC_KEY_B64"), 32)
+        
+        Require.type("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], int)
+        Require.min("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], 1)
+        Require.max("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], 60)
+        
         conf_file = Require.file_exists("CONF_FILE", params["conf_file"])
         params["hmac_key"] = base64.b64decode(os.getenv("HMAC_KEY_B64"), validate=True)
         
         certbot_base_dir = Path(params["certbot_dir"])
-        params["certbot_work_dir"] = certbot_base_dir / "work"
-        params["certbot_logs_dir"] = certbot_base_dir / "logs"
-        params["certbot_conf_dir"] = certbot_base_dir / "config"
-        params["certbot_lock_dir"] = certbot_base_dir / "lock"
+        # params["certbot_work_dir"] = certbot_base_dir / "work"
+        # params["certbot_logs_dir"] = certbot_base_dir / "logs"
+        # params["certbot_conf_dir"] = certbot_base_dir / "config"
+        # params["certbot_lock_dir"] = certbot_base_dir / "lock"
         
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
@@ -67,7 +72,7 @@ class Config:
             raise ValidationError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
         
         try:
-            params["certs"] = cls._parse_certs(raw_conf.get("certs"), params["certbot_conf_dir"])
+            params["certs"] = cls._parse_certs(raw_conf.get("certs"))
             params["identities"] = cls._parse_identities(raw_conf.get("identities"))
         except ValidationError as e:
             raise ValidationError(f"Failed to parse '{conf_file}' config file: {e}")
@@ -75,7 +80,7 @@ class Config:
         return cls(**params)
 
     @staticmethod
-    def _parse_certs(certs_raw: Any, certbot_conf_dir: str) -> list[Cert]:
+    def _parse_certs(certs_raw: Any) -> list[Cert]:
         if certs_raw is None:
             return []
         
@@ -86,7 +91,7 @@ class Config:
             Require.type(f"certs[{i}]", item, dict)
             Require.not_one_of(f"certs[{i}].id", item.get("id"), [c.id for c in certs])
             try:
-                certs.append(Cert.from_dict(item, Path(certbot_conf_dir)))
+                certs.append(Cert.from_dict(item))
             except ValidationError as e:
                 raise ValidationError(f"Error found at certs[{i}]: {e}")
         

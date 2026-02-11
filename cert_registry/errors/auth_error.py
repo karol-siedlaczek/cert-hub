@@ -1,30 +1,19 @@
-class AuthError(Exception):
-    code: int
-    msg: str
-    detail: str
-    
-    def __init__(
-        self, 
-        code: int, 
-        msg: str, 
-        detail: str | None = None
-    ) -> None:
-        self.code = code
-        self.msg = msg
-        self.detail = detail
-        super().__init__(f"{msg}: {detail}")
+from cert_registry.errors.api_error import ApiError
+
+class AuthException(ApiError):
+    pass
 
 
-class AuthTokenMissingError(AuthError):
+class AuthTokenMissingException(AuthException):
     def __init__(self, msg: str) -> None:
-        super().__init__(401, "Authorization is required", msg)
+        super().__init__(401, msg="Authorization is required", detail=msg)
 
 
-class AuthFailedError(AuthError):
+class AuthFailedException(AuthException):
     def __init__(self, msg: str) -> None:
-        super().__init__(401, "Authorization failed", msg)
+        super().__init__(401, msg="Authorization failed", detail=msg)
 
 
-class AuthIpNotAllowedError(AuthError):
+class AuthIpNotAllowedException(AuthException):
     def __init__(self, ip_addr: str) -> None:
-        super().__init__(403, "Access denied", f"Request from IP address '{ip_addr}' is not permitted for this identity")
+        super().__init__(403, msg="Access denied", detail=f"Request from IP address '{ip_addr}' is not permitted for this identity")

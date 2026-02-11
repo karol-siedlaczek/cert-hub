@@ -1,10 +1,10 @@
-
-import os
 from flask import Blueprint, Response
 from cert_registry.api.context import Context
 from cert_registry.api.validators import query_list
-from cert_registry.api.helpers import build_response, abort_response, acquire_lock, release_lock, get_conf
+from cert_registry.api.helpers import build_response
 from cert_registry.domain.permission import PermissionAction
+from cert_registry.domain.cert_status import CertStatus
+from cert_registry.errors.cert_error import CertException
 
 api = Blueprint("api", __name__)
 
@@ -20,7 +20,7 @@ def health() -> Response:
         certs_health.append({ 
             "id": cert.id, 
             "status": cert.get_status().value, 
-            "expireDate": cert.get_expire_date()
+            "expire_date": cert.get_expire_date_as_str()
         })
     
     return build_response(200, data={ "health": "OK", "certs": certs_health })
@@ -30,26 +30,30 @@ def health() -> Response:
 def issue_cert() -> Response:
     certs = query_list("cert", required=True)
     ctx = Context.build(certs, PermissionAction.ISSUE)
-    conf = get_conf()
+    payload = {}
     
-    if not acquire_lock():
-        abort_response(409, msg="Certificate issuance already in progress")
-    
-    try:
-        for cert in ctx.certs:
-            if not cert.is_issued():
-                cert.issue(
-                    conf.acme_server, 
-                    conf.certbot_bin, 
-                    conf.certbot_conf_dir, 
-                    conf.certbot_work_dir, 
-                    conf.certbot_logs_dir
-                )
-    finally:
-        pass
-        #release_lock()
+    #if not acquire_lock():
+    #    abort_response(409, msg="Certificate issuance already in progress")
         
-    return build_response(200, msg="TODO - issue_cert", data={ "cert": "test" })
+    #try:
+    for cert in ctx.certs:
+        try:
+            cert.issue()
+            payload[cert.id] = {
+                "status": CertStatus.ISSUED.value,
+                "msg": f"Successfully issued '{cert.id}' certificate",
+                "expire_date": cert.get_expire_date_as_str()
+            }
+        except CertException as e:
+            payload[cert.id] = {
+                "status": e.status.value,
+                "msg": e.msg
+            }
+    #finally:
+    #    print("release lock")
+    #    release_lock()
+    #    
+    return build_response(200, data=payload)
 
 
 
@@ -57,8 +61,23 @@ def issue_cert() -> Response:
 def renew_certs() -> Response:
     certs = query_list("cert", required=True)
     ctx = Context.build(certs, PermissionAction.RENEW)
+    payload = {}
     
-    return build_response(200, msg="TODO - renew_cert")
+    for cert in ctx.certs:
+        try:
+            cert.renew()
+            payload[cert.id] = {
+                "status": CertStatus.RENEWED.value,
+                "msg": f"Successfully renewed '{cert.id}' certificate",
+                "expire_date": cert.get_expire_date_as_str()
+            }
+        except CertException as e:
+            payload[cert.id] = {
+                "status": e.status.value,
+                "msg": e.msg
+            }
+    
+    return build_response(200, data=payload)
 
 
 @api.route("/api/certs", methods=["GET"])
@@ -69,10 +88,13 @@ def get_cert() -> Response:
     
     for cert in ctx.certs:
         payload[cert.id] = {
-            "chain.pem": cert.get_chain(),
-            "cert.pem": cert.get_cert(),
-            "privkey.pem": cert.get_private_key(),
-            "expire_date": cert.get_expire_date()
+            "content": {
+                "chain.pem": cert.get_chain(),
+                "cert.pem": cert.get_cert(),
+                "privkey.pem": cert.get_private_key()
+            },
+            "expire_date": cert.get_expire_date_as_str(),
+            "status": cert.get_status().value
         }
     
-    return build_response(200, msg="TODO - get_cert", data=payload)
+    return build_response(200, data=payload)

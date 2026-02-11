@@ -1,0 +1,10 @@
+from enum import Enum
+
+class CertStatus(Enum):
+    NOT_ISSUED = "NOT_ISSUED"
+    ISSUED = "ISSUED"
+    ALREADY_ISSUED = "ALREADY_ISSUED"
+    EXPIRING = "EXPIRING"
+    OK = "OK"
+    RENEWED = "RENEWED"
+    NOT_YET_RENEWABLE = "NOT_YET_RENEWABLE"
