@@ -1,4 +1,4 @@
-from cert_registry.errors.api_error import ApiError
+from cert_registry.exception.api_exceptions import ApiError
 
 class AuthException(ApiError):
     pass

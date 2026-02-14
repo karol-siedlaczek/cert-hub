@@ -2,8 +2,9 @@ import logging
 from pathlib import Path
 from flask import Flask, Response
 from werkzeug.exceptions import MethodNotAllowed, NotFound
-from cert_registry.errors.auth_error import AuthException, AuthFailedException
-from cert_registry.errors.api_error import ApiError
+from cert_registry.exception.auth_exceptions import AuthException, AuthFailedException
+from cert_registry.exception.api_exceptions import ApiError
+from cert_registry.domain.cert_bot import CertBot
 from cert_registry.conf.config import Config
 from cert_registry.api.routes import api as api_blueprint
 from cert_registry.api.helpers import build_response, log_request
@@ -11,7 +12,12 @@ from cert_registry.api.helpers import build_response, log_request
 def create_app() -> Flask:
     app = Flask(__name__)
     config = Config.load()
-    certbot = Certbot.init()
+    certbot = CertBot.load(
+        config.certbot_acme_server,
+        config.certbot_dir,
+        config.certbot_bin,
+        config.certbot_renew_before_days
+    )
     app.extensions["config"] = config
     app.extensions["certbot"] = certbot
         
@@ -24,7 +30,7 @@ def create_app() -> Flask:
 
 
 def setup_paths(config: Config) -> None:
-    dir_params = ["logs_dir", "certbot_work_dir", "certbot_logs_dir", "certbot_conf_dir", "certbot_lock_dir"]
+    dir_params = ["logs_dir", "certbot_dir"]
     file_params = ["conf_file"]
     
     for param in dir_params:

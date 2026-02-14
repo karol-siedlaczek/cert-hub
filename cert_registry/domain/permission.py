@@ -30,9 +30,10 @@ class Permission:
             field=f"permissions[{index}]", 
             val=permission, 
             pattern=permission_pattern,
-            custom_err=f"Key 'permissions[{index}]' with '{permission}' permission is invalid, value needs to be provided in following format: '(*|<cert_key>):(*|read|issue|renew|health)'"
+            custom_err=f"Key 'permissions[{index}]' with '{permission}' permission is invalid, value needs to be provided in following format: '(*|<cert_pattern>):({('|').join(PermissionAction.values())})'"
         )
         scope, action_raw = match.groups()
         Require.one_of(f"permissions[{index}]", action_raw, PermissionAction.values())
         
         return cls(scope, PermissionAction(action_raw))
+    

@@ -55,7 +55,7 @@ class Identity:
     
     
     def is_ip_allowed(self, ip_addr: str | None = None) -> bool:
-        log.debug(f"Perform ip address check (ip_addr='{ip_addr}', identity='{self.id}')")
+        log.debug(f"Perform ip address check (ip_addr='{ip_addr}', identity='{self}')")
         
         if not ip_addr:
             return False
@@ -71,3 +71,7 @@ class Identity:
                 return True
         
         return False      
+
+    
+    def __str__(self) -> str:
+        return self.id

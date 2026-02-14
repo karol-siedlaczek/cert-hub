@@ -1,65 +1,97 @@
+import platform
 from flask import Blueprint, Response
 from cert_registry.api.context import Context
-from cert_registry.api.validators import query_list
-from cert_registry.api.helpers import build_response
+from cert_registry.api.validators import query_list, query_bool
+from cert_registry.api.helpers import build_response, log_request
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.cert_status import CertStatus
-from cert_registry.errors.cert_error import CertException
+from cert_registry.exception.cert_exceptions import CertException
 
 api = Blueprint("api", __name__)
 
 
-@api.route("/health", methods=["GET"])
+@api.route("/api/version", methods=["GET"])
+def version() -> Response:
+    payload = {
+        "name": "cert-registry",
+        "author": "karol@siedlaczek.com.pl",
+        "version": "1.0.0",
+        "python": platform.python_version()
+    }
+    return build_response(200, data=payload)
+    
+
+@api.route("/api/health", methods=["GET"])
 def health() -> Response:
-    certs_arg = query_list("cert", required=True)
-    ctx = Context.build(certs_arg, PermissionAction.HEALTH)
+    certs = query_list("cert", default=["*"])
+    exclude_ok = query_bool("exclude_ok")
+    
+    ctx = Context.build(certs, PermissionAction.HEALTH)
 
     certs_health = []
+    is_critical = False
+    is_warning = False
 
     for cert in ctx.certs:
+        status = cert.get_status()
+        
+        if status == CertStatus.EXPIRED:
+            is_critical = True
+        elif status != CertStatus.OK:
+            is_warning = True
+            
+        if exclude_ok and status == CertStatus.OK:
+            continue
+        
         certs_health.append({ 
             "id": cert.id, 
-            "status": cert.get_status().value, 
+            "status": status.value, 
             "expire_date": cert.get_expire_date_as_str()
         })
     
-    return build_response(200, data={ "health": "OK", "certs": certs_health })
+    if is_critical:
+        overall_health = "CRITICAL"
+    elif is_warning:
+        overall_health = "WARNING"
+    else:
+        overall_health = "OK"
+    
+    return build_response(
+        200, 
+        data={ 
+            "health": overall_health, 
+            "certs": certs_health 
+        }
+    )
 
 
 @api.route("/api/certs/issue", methods=["POST"])
 def issue_cert() -> Response:
-    certs = query_list("cert", required=True)
+    certs = query_list("cert", default=["*"])
     ctx = Context.build(certs, PermissionAction.ISSUE)
     payload = {}
-    
-    #if not acquire_lock():
-    #    abort_response(409, msg="Certificate issuance already in progress")
-        
-    #try:
+
     for cert in ctx.certs:
         try:
             cert.issue()
             payload[cert.id] = {
                 "status": CertStatus.ISSUED.value,
-                "msg": f"Successfully issued '{cert.id}' certificate",
+                "msg": f"Successfully issued '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()
             }
         except CertException as e:
+            log_request(e.msg, level="info")
             payload[cert.id] = {
                 "status": e.status.value,
                 "msg": e.msg
             }
-    #finally:
-    #    print("release lock")
-    #    release_lock()
-    #    
     return build_response(200, data=payload)
 
 
 
 @api.route("/api/certs/renew", methods=["POST"])
 def renew_certs() -> Response:
-    certs = query_list("cert", required=True)
+    certs = query_list("cert", default=["*"])
     ctx = Context.build(certs, PermissionAction.RENEW)
     payload = {}
     
@@ -68,10 +100,11 @@ def renew_certs() -> Response:
             cert.renew()
             payload[cert.id] = {
                 "status": CertStatus.RENEWED.value,
-                "msg": f"Successfully renewed '{cert.id}' certificate",
+                "msg": f"Successfully renewed '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()
             }
         except CertException as e:
+            log_request(e.msg, level="info")
             payload[cert.id] = {
                 "status": e.status.value,
                 "msg": e.msg
@@ -82,7 +115,7 @@ def renew_certs() -> Response:
 
 @api.route("/api/certs", methods=["GET"])
 def get_cert() -> Response:
-    certs = query_list("cert", required=True)
+    certs = query_list("cert", default=["*"])
     ctx = Context.build(certs, PermissionAction.READ)
     payload = {}
     

@@ -1,13 +1,14 @@
 import os
 import yaml
 import base64
+from flask import current_app as app, g
 from pathlib import Path
-from typing import ClassVar, Dict, Any
+from typing import ClassVar, Dict, Any, cast
 from dataclasses import dataclass, fields, field
 from cert_registry.validation.require import Require
 from cert_registry.domain.cert import Cert
 from cert_registry.domain.identity import Identity
-from cert_registry.errors.validation_error import ValidationError
+from cert_registry.exception.validator_exceptions import ValidationError
 
 @dataclass(frozen=True)
 class Config:
@@ -21,10 +22,6 @@ class Config:
     certbot_bin: Path = "/usr/bin/certbot"
     certbot_dir: Path = "/letsencrypt"
     certbot_renew_before_days: int = 30
-    # certbot_work_dir: Path = None
-    # certbot_logs_dir: Path = None
-    # certbot_conf_dir: Path = None
-    # certbot_lock_dir: Path = None
     hmac_key: bytes = None 
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
@@ -34,7 +31,7 @@ class Config:
     @classmethod
     def load(cls) -> "Config":
         params: Dict[str, Any] = {}
-        skip_fields = ["certs", "identities"] # "certbot_work_dir", "certbot_logs_dir", "certbot_conf_dir", "certbot_lock_dir"
+        skip_fields = ["certs", "identities"]
         
         # Load environments
         for f in fields(cls):
@@ -53,18 +50,12 @@ class Config:
         Require.one_of("LOG_LEVEL", params["log_level"], cls.ALLOWED_LOG_LEVELS)
         Require.base64("HMAC_KEY_B64", os.getenv("HMAC_KEY_B64"), 32)
         
-        Require.type("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], int)
-        Require.min("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], 1)
-        Require.max("CERT_RENEW_BEFORE_DAYS", params['cert_renew_before_days'], 60)
+        Require.type("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], int)
+        Require.min("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], 1)
+        Require.max("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], 60)
         
         conf_file = Require.file_exists("CONF_FILE", params["conf_file"])
         params["hmac_key"] = base64.b64decode(os.getenv("HMAC_KEY_B64"), validate=True)
-        
-        certbot_base_dir = Path(params["certbot_dir"])
-        # params["certbot_work_dir"] = certbot_base_dir / "work"
-        # params["certbot_logs_dir"] = certbot_base_dir / "logs"
-        # params["certbot_conf_dir"] = certbot_base_dir / "config"
-        # params["certbot_lock_dir"] = certbot_base_dir / "lock"
         
         try:
             raw_conf = yaml.safe_load(conf_file.read_text(encoding="UTF-8")) or {}
@@ -78,6 +69,12 @@ class Config:
             raise ValidationError(f"Failed to parse '{conf_file}' config file: {e}")
         
         return cls(**params)
+
+    @staticmethod
+    def get_from_global_context() -> "Config":
+        if "conf" not in g:
+            g.conf = cast(Config, app.extensions["config"])
+        return g.conf
 
     @staticmethod
     def _parse_certs(certs_raw: Any) -> list[Cert]:
