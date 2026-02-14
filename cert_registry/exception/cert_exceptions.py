@@ -1,22 +1,22 @@
 from typing import Sequence
 from cert_registry.domain.cert_status import CertStatus
-from cert_registry.errors.api_error import ApiError
+from cert_registry.exception.api_exceptions import ApiError
 
-class CertError(ApiError):
-    cert_id: str
+class CertBotError(ApiError):
+    cert_name: str
     cmd: Sequence[str]
     return_code: int
     output: str
     
     def __init__(
         self,
-        cert_id: str,
+        cert_name: str,
         *,
         cmd: Sequence[str],
         return_code: int,
         output: str
     ) -> None:
-        self.cert_id = cert_id
+        self.cert_name = cert_name
         self.return_code = return_code
         self.cmd = cmd
         self.output = output
@@ -25,7 +25,7 @@ class CertError(ApiError):
             "return_code": return_code,
             "output": output
         }
-        super().__init__(502, f"Failed running command for '{cert_id}' certificate", detail=detail, level="error")
+        super().__init__(502, msg=f"Certbot failed while processing certificate '{cert_name}'", detail=detail, level="error")
     
 
 class CertException(Exception):

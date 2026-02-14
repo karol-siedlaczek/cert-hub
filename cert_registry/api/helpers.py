@@ -1,21 +1,14 @@
-import os
-import time
 import logging
-from pathlib import Path
 from datetime import datetime, timezone
-from typing import Any, NoReturn, cast
+from typing import Any, NoReturn
 from http import HTTPStatus
-from flask import Response, abort, jsonify, request, current_app as app, g
-from cert_registry.conf.config import Config
+from flask import Response, abort, jsonify, request
 from cert_registry.domain.identity import Identity
-from cert_registry.errors.auth_error import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
+from cert_registry.conf.config import Config
+from cert_registry.exception.auth_exceptions import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
 
 log = logging.getLogger(__name__)
 
-def get_conf() -> Config:
-    if "conf" not in g:
-        g.conf = cast(Config, app.extensions["config"])
-    return g.conf
 
 def log_request(msg: str, level: str = "info") -> None:
     level = level.lower()
@@ -79,7 +72,7 @@ def require_auth(remote_ip: str) -> Identity:
     except ValueError:
         raise AuthFailedException("Invalid token format, expected: 'Authorization: Bearer <id>.<token>'")
     
-    conf = get_conf()
+    conf = Config.get_from_global_context()
     identity = next((i for i in conf.identities if i.id == identity_id), None)
     
     if identity is None:
@@ -91,25 +84,3 @@ def require_auth(remote_ip: str) -> Identity:
         raise AuthIpNotAllowedException(remote_ip)
     
     return identity
-
-
-# 5 minutes of TTL
-def acquire_lock(*, max_ttl: int = 5 * 60) -> bool:
-    conf = get_conf()
-    lock_file = Path(f"{conf.certbot_lock_dir}/certbot.lock")
-    now = time.time()
-    
-    if lock_file.exists():
-        age = now - lock_file.stat().st_mtime
-        if age < max_ttl:
-            return False
-        lock_file.unlink(missing_ok=True)
-    
-    lock_file.write_text(str(os.getpid()))
-    return True
-
-
-def release_lock() -> None:
-    conf = get_conf()
-    lock_file = Path(f"{conf.certbot_lock_dir}/certbot.lock")
-    lock_file.unlink(missing_ok=True)

@@ -1,14 +1,14 @@
 from flask import request
 from typing import Any, Callable, TypeVar
-from cert_registry.errors.api_error import InvalidRequestError
+from cert_registry.exception.api_exceptions import InvalidRequestError
 
 T = TypeVar("T")
 
 def query_list(
     name: str, 
     *, 
+    default: list[str] = None,
     required: bool = False,
-    allow_star: bool = False,
     strip: bool = True
 ) -> list[str]:
     vals = request.args.getlist(name)
@@ -17,10 +17,15 @@ def query_list(
     
     vals = [v for v in vals if v] # Remove empty values
     
-    if required and not vals:
-        raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name, "example": f"?{name}=val_1&{name}=val_2" })
+    if not vals:
+        if required:
+            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name, "example": f"?{name}=val_1&{name}=val_2" })
+        elif default:
+            return default
+        else:
+            return []
 
-    if allow_star and "*" in vals:
+    if "*" in vals:
         return ["*"]
     
     return vals
@@ -29,21 +34,53 @@ def query_list(
 def query_str(
     name: str, 
     *, 
+    default: str,
     required: bool = False
 ) -> str | None:
     val = request.args.get(name)
     
-    if val is None or val == "*":
+    if val is None:
         if required:
             raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
-        return None
+        elif default:
+            return default
+        else:
+            return None
     
     return str(val).strip()
 
 
+def query_bool(
+    name: str,
+    *,
+    default: bool = None,
+    required: bool = False
+) -> bool:
+    val = request.args.get(name)
+    
+    if val is None:
+        if required:
+            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
+        elif default:
+            return default
+        else:
+            return False
+    
+    true_values = ["1", "true", "True", "yes", "Yes", ""]
+    false_values = ["0", "false", "False", "no", "No"]
+    
+    if val in true_values:
+        return True
+    elif val in false_values:
+        return False
+    else:
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "bool", "allowed_choices": true_values + false_values })
+    
+
 def query_int(
     name: str,
     *,
+    default: int = None,
     required: bool = False,
     min_val: int | None = None,
     max_val: int | None = None
@@ -53,12 +90,15 @@ def query_int(
     if raw_val is None or raw_val == "":
         if required:
             raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
-        return None
+        elif default:
+            return default
+        else:
+            return None
     
     try:
         val = int(raw_val)
     except ValueError:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expecter": "integer" })
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "integer" })
     
     if min_val is not None and val < min_val:
         raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "min": min_val })
@@ -69,7 +109,8 @@ def query_int(
 
 
 def json_body(
-    *, 
+    *,
+    default: dict = None,
     required=True
 ) -> dict[str, Any]:
     data = request.get_json(silent=True)
@@ -77,7 +118,10 @@ def json_body(
     if data is None:
         if required:
             raise InvalidRequestError("Missing JSON body", detail={ "expected": "application/json" })
-        return {}
+        if default:
+            return default
+        else:
+            return {}
     
     if not isinstance(data, dict):
         raise InvalidRequestError("Invalid JSON body", detail={ "expected", "JSON object" })

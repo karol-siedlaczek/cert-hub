@@ -2,11 +2,12 @@ import re
 from dataclasses import dataclass
 from flask import request
 from typing import Pattern
-from cert_registry.errors.api_error import ApiError
-from cert_registry.api.helpers import get_conf, require_auth
+from cert_registry.exception.api_exceptions import ApiError
+from cert_registry.api.helpers import require_auth
 from cert_registry.domain.identity import Identity
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.cert import Cert
+from cert_registry.conf.config import Config
 
 @dataclass(frozen=True)
 class Context():
@@ -25,7 +26,7 @@ class Context():
 
         selected_certs = []
         requested_scopes = set(scopes)
-        conf = get_conf()
+        conf = Config.get_from_global_context()
     
         if "*" in scopes:
             for cert in conf.certs:
