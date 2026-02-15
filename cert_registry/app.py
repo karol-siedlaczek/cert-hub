@@ -1,13 +1,18 @@
 import logging
+import importlib.util
 from pathlib import Path
 from flask import Flask, Response
 from werkzeug.exceptions import MethodNotAllowed, NotFound
 from cert_registry.exception.auth_exceptions import AuthException, AuthFailedException
 from cert_registry.exception.api_exceptions import ApiError
+from cert_registry.exception.validator_exceptions import ValidationError
 from cert_registry.domain.cert_bot import CertBot
 from cert_registry.conf.config import Config
 from cert_registry.api.routes import api as api_blueprint
 from cert_registry.api.helpers import build_response, log_request
+
+REQUIRED_PACKAGES = ["certbot", "acme", "cffi"]
+
 
 def create_app() -> Flask:
     app = Flask(__name__)
@@ -20,13 +25,21 @@ def create_app() -> Flask:
     )
     app.extensions["config"] = config
     app.extensions["certbot"] = certbot
-        
+    app.json.sort_keys = False
+    
+    check_packages()
     setup_paths(config)
     setup_logging(config)
     setup_error_handlers(app)
     app.register_blueprint(api_blueprint)
     
     return app
+
+
+def check_packages() -> None:
+    for pkg in REQUIRED_PACKAGES:
+        if importlib.util.find_spec(pkg) is None:
+            raise ValidationError(f"Required package '{pkg}' is not installed")
 
 
 def setup_paths(config: Config) -> None:

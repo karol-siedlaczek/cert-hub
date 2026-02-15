@@ -10,6 +10,15 @@ from cert_registry.exception.auth_exceptions import AuthTokenMissingException, A
 log = logging.getLogger(__name__)
 
 
+@staticmethod
+def get_remote_ip() -> str | None:
+    if request.remote_addr:
+        return request.remote_addr
+    
+    xff = request.headers.get("X-Forwarder-For", "")
+    return xff.split(",")[0].strip() if xff else None
+
+
 def log_request(msg: str, level: str = "info") -> None:
     level = level.lower()
     log_fn = getattr(log, level, None)
@@ -19,16 +28,6 @@ def log_request(msg: str, level: str = "info") -> None:
     log_fn(f"{request.remote_addr} {request.method} {request.path} {msg}")
 
 
-def abort_response(
-    code: int,
-    *,
-    msg: str, 
-    detail: Any | None = None
-) -> NoReturn:
-    response = build_response(code, msg=msg, detail=detail)
-    abort(response)
-
-
 def build_response(
     code: int,
     *,
@@ -36,12 +35,7 @@ def build_response(
     data: Any = None, 
     detail: Any | None = None
 ) -> Response:
-    payload = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": HTTPStatus(code).phrase,
-        "path": request.path,
-        "code": code
-    }
+    payload = {}
     
     if msg is not None:
         payload["message"] = msg
@@ -49,6 +43,15 @@ def build_response(
         payload["detail"] = detail
     if data is not None:
         payload["data"] = data
+        
+    
+    payload = {
+        "http_code": code,
+        "http_status": HTTPStatus(code).phrase,
+        "path": request.path,
+        **payload,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
     
     response = jsonify(payload)
     response.status_code = code
