@@ -25,6 +25,7 @@ class Cert:
     id: str
     email: str
     domains: tuple[str, ...]
+    pem_filename: str
     dns_provider: DnsProvider
     
     @classmethod
@@ -37,6 +38,7 @@ class Cert:
         id = get_required("id")
         email = get_required("email")
         domains = get_required("domains")
+        pem_filename = get_required("pem_filename")
         dns_provider_raw = get_required("dns_provider")
         
         Require.type("id", id, str)
@@ -50,7 +52,7 @@ class Cert:
         dns_provider = DnsProvider(dns_provider_raw)
         Require.installed_module("dns_provider", dns_provider.value, dns_provider.get_required_module()) 
     
-        return cls(id, email, tuple(domains), dns_provider)
+        return cls(id, email, tuple(domains), pem_filename, dns_provider)
 
     
     def has_permission(self, identity: Identity, action: PermissionAction) -> bool:

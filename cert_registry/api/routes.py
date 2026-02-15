@@ -95,9 +95,8 @@ def issue_cert() -> Response:
     return build_response(200, data=payload)
 
 
-
 @api.route("/api/certs/renew", methods=["POST"])
-def renew_certs() -> Response:
+def renew_cert() -> Response:
     certs = query_list("cert", default=["*"])
     force = query_bool("force")
     context = Context.build(certs, PermissionAction.RENEW)
@@ -125,49 +124,26 @@ def renew_certs() -> Response:
 def get_cert() -> Response:
     certs = query_list("cert", default=["*"])
     context = Context.build(certs, PermissionAction.READ)
-    payload = {}
+    payload = []
     
     for cert in context.certs:
-        payload[cert.id] = {
+        payload.append({
+            "id": cert.id,
+            "pem_filename": cert.pem_filename,
+            "domains": cert.domains,
+            "expire_date": cert.get_expire_date_as_str(),
+            "status": cert.get_status().value,
             "content": {
                 "chain.pem": cert.get_chain(),
                 "cert.pem": cert.get_cert(),
-                "privkey.pem": cert.get_private_key()
-            },
-            "domains": cert.domains,
-            "expire_date": cert.get_expire_date_as_str(),
-            "status": cert.get_status().value
-        }
+                "privkey.pem": cert.get_private_key(),
+            }
+        })
     
     return build_response(200, data=payload)
 
 
-# @api.route("/api/scope", methods=["GET"])
-# def get_scope() -> Response:
-#     remote_ip = get_remote_ip()
-#     identity = require_auth(remote_ip)
-#     conf = Config.get_from_global_context()
-#     actions = [a for a in PermissionAction if a != PermissionAction.ANY]
-    
-#     payload = {}             
-
-#     for cert in conf.certs:
-#         cert_scope = {}
-#         has_any_access = False
-
-#         for action in actions:
-#             is_allowed = cert.has_permission(identity, action)
-#             cert_scope[action.value] = "True" if is_allowed else "False"
-
-#             if is_allowed:
-#                 has_any_access = True
-
-#         if has_any_access:
-#             payload[cert.id] = cert_scope
-
-#     return build_response(200, data=payload)
-
-@api.route("/api/scope", methods=["GET"])
+@api.route("/api/token/scope", methods=["GET"])
 def get_scope() -> Response:
     remote_ip = get_remote_ip()
     identity = require_auth(remote_ip)
@@ -184,7 +160,7 @@ def get_scope() -> Response:
     return build_response(200, data=payload)
 
 
-@api.route("/api/identity", methods=["GET"])
+@api.route("/api/token/identity", methods=["GET"])
 def get_identity() -> Response:
     remote_ip = get_remote_ip()
     identity = require_auth(remote_ip)
