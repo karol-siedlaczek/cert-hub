@@ -1,9 +1,8 @@
 import re
 from dataclasses import dataclass
-from flask import request
 from typing import Pattern
-from cert_registry.exception.api_exceptions import ApiError
-from cert_registry.api.helpers import require_auth
+from cert_registry.exception.api_exceptions import ApiError, InvalidScopeException
+from cert_registry.api.helpers import require_auth, get_remote_ip
 from cert_registry.domain.identity import Identity
 from cert_registry.domain.permission import PermissionAction
 from cert_registry.domain.cert import Cert
@@ -21,7 +20,7 @@ class Context():
         scopes: str | list[str], 
         action: PermissionAction
     ) -> "Context":
-        remote_ip = Context.get_remote_ip()
+        remote_ip = get_remote_ip()
         identity = require_auth(remote_ip)
 
         selected_certs = []
@@ -55,15 +54,8 @@ class Context():
                     selected_certs.append(cert)
                 
         if not selected_certs:
-            raise ApiError(404, msg="Not found any certificate for selected scope and action", detail={ "scope": list(requested_scopes), "action": action.value })
+            raise InvalidScopeException("Not found any certificate for selected scope and action", detail={ "scope": list(requested_scopes), "action": action.value })
                 
         return cls(remote_ip, identity, selected_certs)
     
     
-    @staticmethod
-    def get_remote_ip() -> str | None:
-        if request.remote_addr:
-            return request.remote_addr
-        
-        xff = request.headers.get("X-Forwarder-For", "")
-        return xff.split(",")[0].strip() if xff else None

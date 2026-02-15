@@ -24,7 +24,7 @@ class Cert:
     
     id: str
     email: str
-    domains: tuple[str, ...] # TODO - Do I need tuple?
+    domains: tuple[str, ...]
     dns_provider: DnsProvider
     
     @classmethod
@@ -75,10 +75,10 @@ class Cert:
         return False
     
     
-    def issue(self) -> None:
+    def issue(self, force: bool = False) -> None:
         log.debug(f"Issuing '{self}' certificate...")
         
-        if self.is_issued():
+        if not force and self.is_issued():
             raise CertException(
                 self.id,
                 f"Certificate is already issued with expiration date to {self.get_expire_date_as_str()}",
@@ -91,11 +91,11 @@ class Cert:
         log.info(f"Successfully issued '{self}' certificate with expiration date to {self.get_expire_date_as_str()}")
         
     
-    def renew(self) -> None:
+    def renew(self, force: bool = False) -> None:
         log.debug(f"Renewing '{self}' certificate...")
         certbot = CertBot.get_from_global_context()
         
-        if not self.is_expiring():
+        if not force and not self.is_expiring():
             raise CertException(
                 self.id,
                 f"Certificate can be renewed {certbot.renew_before_days} days before expiration, current expiration date is {self.get_expire_date_as_str()}",

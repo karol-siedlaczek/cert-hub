@@ -28,3 +28,12 @@ class InvalidRequestError(ApiError):
     ) -> None:
         super().__init__(400, msg=msg, detail=detail)
 
+
+class InvalidScopeException(ApiError):
+    def __init__(
+        self,
+        msg: str,
+        *,
+        detail: str | None = None
+    ) -> None:
+        super().__init__(404, msg=msg, detail=detail)

@@ -20,6 +20,6 @@ if __name__ == "__main__":
     key = base64.b64decode(args.hmac_key_b64)
     token = str(args.token_value).encode()
     hmac_key = hmac.new(key, token, hashlib.sha256)
-    print(f"TOKEN_{str(args.token_key).upper()}_HMAC={hmac_key.hexdigest()}")
+    print(f"TOKEN_{str(args.token_key)}_HMAC={hmac_key.hexdigest()}")
     
     
