@@ -21,8 +21,8 @@ TODO
 | `CERTBOT_DIR` | `string` | :x: | `/letsencrypt` | TODO |
 | `CERTBOT_RENEW_BEFORE_DAYS` | `number` | :x: | `30` | TODO |
 | `HMAC_KEY_B64` | `string` | :heavy_check_mark: | - | TODO |
-| `AWS_ACCESS_KEY_ID` | `string` | :heavy_check_mark: | - | TODO |
-| `AWS_SECRET_ACCESS_KEY` | `string` | :heavy_check_mark: | - | TODO |
+| `AWS_ACCESS_KEY_ID` | `string` | :x: | - | Required only if `aws` DNS provider is used |
+| `AWS_SECRET_ACCESS_KEY` | `string` | :x: | - | Required only if `aws` DNS provider is used |
 
 ## Configuration
 TODO

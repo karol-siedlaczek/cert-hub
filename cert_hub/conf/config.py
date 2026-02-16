@@ -12,7 +12,7 @@ from cert_hub.exception.validator_exceptions import ValidationError
 
 @dataclass(frozen=True)
 class Config:
-    REQUIRED_ENVS: ClassVar[set[str]] = { "HMAC_KEY_B64", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY" }
+    REQUIRED_ENVS: ClassVar[set[str]] = { "HMAC_KEY_B64" }
     ALLOWED_LOG_LEVELS: ClassVar[set[str]] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" }
     
     log_level: str = "INFO"
