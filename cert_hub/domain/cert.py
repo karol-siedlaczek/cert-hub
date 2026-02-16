@@ -7,13 +7,13 @@ from datetime import datetime
 from dataclasses import dataclass
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cert_registry.exception.cert_exceptions import CertException
-from cert_registry.domain.permission import PermissionAction
-from cert_registry.domain.identity import Identity
-from cert_registry.domain.cert_bot import CertBot
-from cert_registry.domain.cert_status import CertStatus
-from cert_registry.domain.dns_provider import DnsProvider
-from cert_registry.validation.require import Require
+from cert_hub.exception.cert_exceptions import CertException
+from cert_hub.domain.permission import PermissionAction
+from cert_hub.domain.identity import Identity
+from cert_hub.domain.cert_bot import CertBot
+from cert_hub.domain.cert_status import CertStatus
+from cert_hub.domain.dns_provider import DnsProvider
+from cert_hub.validation.require import Require
 
 log = logging.getLogger(__name__)
 

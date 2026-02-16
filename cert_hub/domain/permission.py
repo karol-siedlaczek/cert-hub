@@ -1,7 +1,7 @@
 import re
 from enum import Enum
 from dataclasses import dataclass
-from cert_registry.validation.require import Require
+from cert_hub.validation.require import Require
 
 class PermissionAction(Enum):
     ANY = "*"

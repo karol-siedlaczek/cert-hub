@@ -1,12 +1,12 @@
 import re
 from dataclasses import dataclass
 from typing import Pattern
-from cert_registry.exception.api_exceptions import ApiError, InvalidScopeException
-from cert_registry.api.helpers import require_auth, get_remote_ip
-from cert_registry.domain.identity import Identity
-from cert_registry.domain.permission import PermissionAction
-from cert_registry.domain.cert import Cert
-from cert_registry.conf.config import Config
+from cert_hub.exception.api_exceptions import ApiError, InvalidScopeException
+from cert_hub.api.helpers import require_auth, get_remote_ip
+from cert_hub.domain.identity import Identity
+from cert_hub.domain.permission import PermissionAction
+from cert_hub.domain.cert import Cert
+from cert_hub.conf.config import Config
 
 @dataclass(frozen=True)
 class Context():

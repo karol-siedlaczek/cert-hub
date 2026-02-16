@@ -1,12 +1,12 @@
 import platform
 from flask import Blueprint, Response
-from cert_registry.api.context import Context
-from cert_registry.api.validators import query_list, query_bool
-from cert_registry.api.helpers import build_response, log_request, require_auth, get_remote_ip
-from cert_registry.conf.config import Config
-from cert_registry.domain.permission import PermissionAction
-from cert_registry.domain.cert_status import CertStatus
-from cert_registry.exception.cert_exceptions import CertException
+from cert_hub.api.context import Context
+from cert_hub.api.validators import query_list, query_bool
+from cert_hub.api.helpers import build_response, log_request, require_auth, get_remote_ip
+from cert_hub.conf.config import Config
+from cert_hub.domain.permission import PermissionAction
+from cert_hub.domain.cert_status import CertStatus
+from cert_hub.exception.cert_exceptions import CertException
 
 api = Blueprint("api", __name__)
 
@@ -19,7 +19,7 @@ def ping() -> str:
 @api.route("/api/version", methods=["GET"])
 def version() -> Response:
     payload = {
-        "name": "cert-registry",
+        "name": "Cert Hub",
         "author": "karol@siedlaczek.com.pl",
         "version": "1.0.0",
         "python": platform.python_version()

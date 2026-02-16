@@ -4,7 +4,7 @@ import base64
 import binascii
 import ipaddress
 import importlib.util
-from cert_registry.exception.validator_exceptions import ValidationError
+from cert_hub.exception.validator_exceptions import ValidationError
 from pathlib import Path
 from typing import Any, Match, Type, TypeVar, Pattern, Iterable
 

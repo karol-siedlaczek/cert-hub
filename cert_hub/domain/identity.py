@@ -5,8 +5,8 @@ import logging
 from hashlib import sha256
 from dataclasses import dataclass
 from typing import Any
-from cert_registry.domain.permission import Permission
-from cert_registry.validation.require import Require
+from cert_hub.domain.permission import Permission
+from cert_hub.validation.require import Require
 
 log = logging.getLogger(__name__)
 

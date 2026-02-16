@@ -1,6 +1,6 @@
 from flask import request
 from typing import Any, Callable, TypeVar
-from cert_registry.exception.api_exceptions import InvalidRequestError
+from cert_hub.exception.api_exceptions import InvalidRequestError
 
 T = TypeVar("T")
 
