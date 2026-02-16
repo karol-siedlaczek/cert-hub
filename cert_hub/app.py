@@ -3,13 +3,13 @@ import importlib.util
 from pathlib import Path
 from flask import Flask, Response
 from werkzeug.exceptions import MethodNotAllowed, NotFound
-from cert_registry.exception.auth_exceptions import AuthException, AuthFailedException
-from cert_registry.exception.api_exceptions import ApiError
-from cert_registry.exception.validator_exceptions import ValidationError
-from cert_registry.domain.cert_bot import CertBot
-from cert_registry.conf.config import Config
-from cert_registry.api.routes import api as api_blueprint
-from cert_registry.api.helpers import build_response, log_request
+from cert_hub.exception.auth_exceptions import AuthException, AuthFailedException
+from cert_hub.exception.api_exceptions import ApiError
+from cert_hub.exception.validator_exceptions import ValidationError
+from cert_hub.domain.cert_bot import CertBot
+from cert_hub.conf.config import Config
+from cert_hub.api.routes import api as api_blueprint
+from cert_hub.api.helpers import build_response, log_request
 
 REQUIRED_PACKAGES = ["certbot", "acme", "cffi"]
 

@@ -4,8 +4,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Sequence, Optional, cast
 from flask import current_app as app, g
-from cert_registry.domain.dns_provider import DnsProvider
-from cert_registry.exception.cert_exceptions import CertBotError
+from cert_hub.domain.dns_provider import DnsProvider
+from cert_hub.exception.cert_exceptions import CertBotError
 
 log = logging.getLogger(__name__)
 

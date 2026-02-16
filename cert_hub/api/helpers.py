@@ -3,9 +3,9 @@ from datetime import datetime, timezone
 from typing import Any, NoReturn
 from http import HTTPStatus
 from flask import Response, abort, jsonify, request
-from cert_registry.domain.identity import Identity
-from cert_registry.conf.config import Config
-from cert_registry.exception.auth_exceptions import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
+from cert_hub.domain.identity import Identity
+from cert_hub.conf.config import Config
+from cert_hub.exception.auth_exceptions import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
 
 log = logging.getLogger(__name__)
 

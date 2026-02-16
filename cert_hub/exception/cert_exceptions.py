@@ -1,6 +1,6 @@
 from typing import Sequence
-from cert_registry.domain.cert_status import CertStatus
-from cert_registry.exception.api_exceptions import ApiError
+from cert_hub.domain.cert_status import CertStatus
+from cert_hub.exception.api_exceptions import ApiError
 
 class CertBotError(ApiError):
     cert_name: str

@@ -5,10 +5,10 @@ from flask import current_app as app, g
 from pathlib import Path
 from typing import ClassVar, Dict, Any, cast
 from dataclasses import dataclass, fields, field
-from cert_registry.validation.require import Require
-from cert_registry.domain.cert import Cert
-from cert_registry.domain.identity import Identity
-from cert_registry.exception.validator_exceptions import ValidationError
+from cert_hub.validation.require import Require
+from cert_hub.domain.cert import Cert
+from cert_hub.domain.identity import Identity
+from cert_hub.exception.validator_exceptions import ValidationError
 
 @dataclass(frozen=True)
 class Config:

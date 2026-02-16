@@ -13,34 +13,34 @@ from dataclasses import dataclass
 from typing import Any, Optional, Dict
 import requests
 
-SETTINGS_FILE = Path("~/.cert-registry").expanduser()
+SETTINGS_FILE = Path("~/.certhub").expanduser()
 
 # App
 
 app = typer.Typer(
     add_completion=True, 
-    help="CLI for managing certificates in Cert Registry."
+    help="CLI for managing certificates in Cert Hub"
 )
-cert_app = typer.Typer(help="Certificate commands, use 'cert-registry cert --help' for details")
-token_app = typer.Typer(help="Token commands, add 'cert-registry token --help' for details")
+cert_app = typer.Typer(help="Certificate commands, use 'certhub cert --help' for details")
+token_app = typer.Typer(help="Token commands, add 'certhub token --help' for details")
 app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
 console = Console()
 
 @dataclass
 class Settings:
-    base_url: str | None
+    api_url: str | None
     token: str | None
     
 
 @app.callback()
 def main(
     ctx: typer.Context,
-    base_url: str = typer.Option(
+    api_url: str = typer.Option(
         None,
         "--base-url",
-        envvar="CERT_REGISTRY_URL",
-        help=f"API base URL. You can also set BASE_URL=<value> in {SETTINGS_FILE}.",
+        envvar="CERT_REGISTRY_API_URL",
+        help=f"API base URL. You can also set API_URL=<value> in {SETTINGS_FILE}.",
     ),
     token: str = typer.Option(
         None,
@@ -49,7 +49,7 @@ def main(
         help=f"Bearer token. You can also set TOKEN=<value> in {SETTINGS_FILE}.",
     )
 ) -> None:
-    ctx.obj = Settings(base_url=base_url, token=token)
+    ctx.obj = Settings(api_url=api_url, token=token)
 
 # Client
 
@@ -121,7 +121,7 @@ def health(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
     params = {}
     if exclude_ok:
@@ -149,7 +149,7 @@ def version(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     response = client.request("GET", "/api/version")
     payload = parse_response(response)
     
@@ -169,7 +169,7 @@ def scope(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     response = client.request("GET", "/api/token/scope")
     payload = parse_response(response)
     
@@ -189,7 +189,7 @@ def identity(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     response = client.request("GET", "/api/token/identity")
     payload = parse_response(response)
     
@@ -233,7 +233,7 @@ def issue(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
 
 
 @cert_app.command(help="")
@@ -249,7 +249,7 @@ def renew(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
 
 @cert_app.command(help="")
@@ -265,14 +265,13 @@ def get(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.base_url, token=settings.token, timeout=timeout)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
     response = client.request("GET", "/api/certs")
     payload = parse_response(response)
     
     render(payload, format)
     
-
 
 # Helper functions
 
@@ -298,14 +297,14 @@ def load_settings(ctx: typer.Context) -> Settings:
             key, value = line.split("=", 1)
             file_settings[key.strip().upper()] = value.strip()
 
-    if not settings.base_url:
-        settings.base_url = file_settings.get("BASE_URL")
+    if not settings.api_url:
+        settings.api_url = file_settings.get("API_URL")
     if not settings.token:
         settings.token = file_settings.get("TOKEN")
 
-    if not settings.base_url:
+    if not settings.api_url:
         raise typer.BadParameter(
-            f"Provide --base-url, set CERT_REGISTRY_URL environment variable, or add BASE_URL=<value> in {SETTINGS_FILE}"
+            f"Provide --api-url, set CERT_REGISTRY_API_URL environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
         )
     return settings
 
