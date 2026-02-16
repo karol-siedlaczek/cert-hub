@@ -10,12 +10,14 @@ class DnsProvider(Enum):
     def get_plugin(self) -> str:
         if self == DnsProvider.AWS:
             return 'dns-route53'
-        else:
-            return None
+        
         
     def get_required_module(self) -> str:
         if self == DnsProvider.AWS:
             return "certbot-dns-route53"
-        else:
-            return None
-    
+
+        
+    def get_required_envs(self) -> tuple[str]:
+        if self == DnsProvider.AWS:
+            return ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+        
