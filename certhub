@@ -6,6 +6,8 @@ import hmac
 import hashlib
 import base64
 import sys
+import binascii
+from getpass import getpass
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -116,7 +118,7 @@ def health(
     ),
     timeout: int = typer.Option(
         10, "--timeout", "-t", 
-        help="Request timeout in seconds"
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
@@ -144,7 +146,7 @@ def version(
     ctx: typer.Context,
     timeout: int = typer.Option(
         10, "--timeout", "-t", 
-        help="Request timeout in seconds"
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
@@ -164,7 +166,7 @@ def scope(
     ctx: typer.Context,
     timeout: int = typer.Option(
         10, "--timeout", "-t", 
-        help="Request timeout in seconds"
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
@@ -184,7 +186,7 @@ def identity(
     ctx: typer.Context,
     timeout: int = typer.Option(
         10, "--timeout", "-t", 
-        help="Request timeout in seconds."
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
@@ -202,53 +204,89 @@ def identity(
     render(payload, format)
 
 
-@token_app.command(help="Generate TOKEN_<ID>_HMAC for server configuration") 
-def generate_hmac(
+@token_app.command(help="Generate TOKEN_<ID>_HMAC value for server configuration") 
+def gen_hmac(
     hmac_key_b64: str = typer.Option(
-        ..., "--hmac-key-b64",
-        help="Base64-encoded HMAC key (same value as server HMAC_KEY_B64)",
+        None, "--hmac-key-b64",
+        help="Base64-encoded HMAC key, min length is at least 32 bytes (must match server HMAC_KEY_B64). If not provided, you will be prompted (Recommended)",
     ),
     token_id: str = typer.Option(
-        ..., "--id", "-i",
-        help="Identity ID used in Authorization token format: <id>.<token>",
+        None, "--id", "-i",
+        help="Identity ID used as <id> in 'Authorization: Bearer <id>.<token>'. If not provided, you will be prompted",
     ),
     token_value: str = typer.Option(
-        ..., "--token", "-t",
-        help="Raw token value used as <token> in Authorization: Bearer <id>.<token>",
+        None, "--token", "-t",
+        help="Raw token value used as <token> in 'Authorization: Bearer <id>.<token>'. If not provided, you will be prompted (Recommended)",
     )
 ) -> None:
-    key = base64.b64decode(hmac_key_b64)
+    if token_id is None:
+        token_id = input("Token ID: ").strip()
+    if hmac_key_b64 is None:
+        hmac_key_b64 = getpass("HMAC key (base64): ").strip()
+    if token_value is None:
+        token_value_1 = getpass("Token value: ").strip()
+        token_value_2 = getpass("Confirm token value: ").strip()
+        
+        if token_value_1 != token_value_2:
+            raise typer.BadParameter("Token values do not match")
+        
+        if not token_value_1:
+            raise typer.BadParameter("Token value cannot be empty")
+        
+        token_value = token_value_1
+        
+    try:
+        hmac_key = base64.b64decode(hmac_key_b64, validate=True)
+    except binascii.Error:
+        raise typer.BadParameter(
+            "Invalid HMAC key: not valid base64.\n"
+            "Generate a new one with:\n"
+            "  openssl rand -base64 32\n\n"
+            "NOTE !!!\nHMAC key must match server HMAC_KEY_B64"
+        )
+    
+    if len(hmac_key) < 32:
+        raise typer.BadParameter(
+            "Invalid HMAC key: decoded key must be at least 32 bytes.\n"
+            "Generate a secure key with:\n"
+            "  openssl rand -base64 32\n\n"
+            "NOTE !!!\nHMAC key must match server HMAC_KEY_B64"
+        )
+
     token = str(token_value).encode()
-    hmac_key = hmac.new(key, token, hashlib.sha256)
-    print(f"Environment to setup in server:\nTOKEN_{str(token_id.upper())}_HMAC={hmac_key.hexdigest()}")
+    hmac_key = hmac.new(hmac_key, token, hashlib.sha256)
+    
+    typer.secho("\nSuccess!\n", fg=typer.colors.GREEN)
+    print("Add the following environment variable to the server:")
+    print(f"TOKEN_{token_id.upper()}_HMAC={hmac_key.hexdigest()}\n")
 
 
-@cert_app.command(help="TODO")
+@cert_app.command(help="Issue new certificates for the current identity or selected certificate IDs")
 def issue(
     ctx: typer.Context,
     timeout: int = typer.Option(
         360, "--timeout", "-t", 
-        help="Request timeout in seconds."
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
-        help="Output format: table, json, or text."
+        help="Output format: table, json, or text"
     ),
     cert_ids: list[str] = typer.Option(
         None, "--id", "-i",
-        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
+        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
     )
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
 
 
-@cert_app.command(help="TODO")
+@cert_app.command(help="Renew existing certificates for the current identity or selected certificate IDs")
 def renew(
     ctx: typer.Context,
     timeout: int = typer.Option(
         360, "--timeout", "-t", 
-        help="Request timeout in seconds."
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
@@ -256,7 +294,7 @@ def renew(
     ),
     cert_ids: list[str] = typer.Option(
         None, "--id", "-i",
-        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
+        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
     )
 ) -> None:
     print(cert_ids)
@@ -264,20 +302,20 @@ def renew(
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
 
-@cert_app.command(help="TODO")
+@cert_app.command(help="List certificates available for the current identity")
 def list(
     ctx: typer.Context,
     timeout: int = typer.Option(
         360, "--timeout", "-t", 
-        help="Request timeout in seconds."
+        help="API request timeout in seconds"
     ),
     format: str = typer.Option(
         "table", "--format", "-f", 
-        help="Output format: table, json, or text."
+        help="Output format: table, json, or text"
     ),
     cert_ids: list[str] = typer.Option(
         None, "--id", "-i",
-        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
+        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
     )
 ) -> None:
     settings = load_settings(ctx)
@@ -289,16 +327,16 @@ def list(
     render(payload, format)
     
 
-@cert_app.command(help="TODO")
+@cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
 def update_in_place(
     ctx: typer.Context,
     dest_dir: str = typer.Option(
         ..., "--dest-dir", "-d",
-        help=""
+        help="Directory containing certificate files to check and update"
     ),
     post_hook: str = typer.Option(
         None, "--post-hook",
-        help="Post-hook script to run after successful update any certificate"
+        help="Executable to run after successful update of any locally expired certificate"
     )
 ) -> None:
     settings = load_settings(ctx)
@@ -389,7 +427,6 @@ def _render_table_cell(value) -> str:
         if not value:
             return "-"
 
-        # list[dict] -> każdy dict jako blok
         if all(isinstance(x, dict) for x in value):
             blocks = []
             for i, item in enumerate(value, start=1):

@@ -187,20 +187,6 @@ class Require():
                 default_err=f"Value '{field}={val}' has invalid type, must be a {class_type.__name__}",
                 custom_err=custom_err
             )
-    
-    # @staticmethod
-    # def file_path(
-    #     field: str, 
-    #     val: str, 
-    #     custom_err: str | None = None
-    # ) -> None:
-    #     try:
-    #         return Path(val).expanduser()
-    #     except Exception:
-    #         Require._raise_error(
-    #             default_err=f"Value '{field}={val}' is not a valid path to a file",
-    #             custom_err=custom_err
-    #         )
 
     @staticmethod 
     def file_exists(
