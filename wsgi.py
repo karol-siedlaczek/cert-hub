@@ -13,11 +13,19 @@ if bind_port:
 
 workers = os.getenv("GUNICORN_WORKERS")
 if workers:
+    Require.min("GUNICORN_WORKERS", workers, 1)
+    Require.min("GUNICORN_WORKERS", workers, 24)
     Require.type("GUNICORN_WORKERS", workers, int)
 
 threads = os.getenv("GUNICORN_THREADS")
 if threads:
+    Require.min("GUNICORN_THREADS", threads, 1)
+    Require.min("GUNICORN_THREADS", threads, 24)
     Require.type("GUNICORN_THREADS", threads, int)
+    
+timeout = os.getenv("GUNICORN_TIMEOUT")
+if timeout:
+    Require.type("GUNICORN_TIMEOUT", timeout, int)
 
 app = create_app()
 app.wsgi_app = ProxyFix(
