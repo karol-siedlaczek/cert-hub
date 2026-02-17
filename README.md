@@ -65,6 +65,9 @@ TOKEN_ADMIN_HMAC="value"
 TOKEN_EXAMPLE_HMAC="value"
 ```
 
+TODO - How to generate HMAC
+TODO - how to store HMAC_KEY_B64
+TODO - Show CLI examples
 
 # Notes
 before start gunicorn run:
