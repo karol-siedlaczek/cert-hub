@@ -5,14 +5,17 @@ import typer
 import hmac
 import hashlib
 import base64
+import sys
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 from dataclasses import dataclass
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, List
 import requests
 
+ENV_VAR_API_URL = "CERTHUB_API_URL"
+ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
 
 # App
@@ -21,8 +24,8 @@ app = typer.Typer(
     add_completion=True, 
     help="CLI for managing certificates in Cert Hub"
 )
-cert_app = typer.Typer(help="Certificate commands, use 'certhub cert --help' for details")
-token_app = typer.Typer(help="Token commands, add 'certhub token --help' for details")
+cert_app = typer.Typer(help=f"Certificate commands, use '{sys.argv[0]} cert --help' for details")
+token_app = typer.Typer(help=f"Token commands, add '{sys.argv[0]} token --help' for details")
 app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
 console = Console()
@@ -37,16 +40,16 @@ class Settings:
 def main(
     ctx: typer.Context,
     api_url: str = typer.Option(
-        None,
+        "http://localhost:8080",
         "--base-url",
-        envvar="CERT_REGISTRY_API_URL",
-        help=f"API base URL. You can also set API_URL=<value> in {SETTINGS_FILE}.",
+        envvar=ENV_VAR_API_URL,
+        help=f"API base URL. You can set environment or set API_URL=<value> in {SETTINGS_FILE}",
     ),
     token: str = typer.Option(
         None,
         "--token",
-        envvar="CERT_REGISTRY_TOKEN",
-        help=f"Bearer token. You can also set TOKEN=<value> in {SETTINGS_FILE}.",
+        envvar=ENV_VAR_TOKEN,
+        help=f"Bearer token. You can set environment or set TOKEN=<value> in {SETTINGS_FILE}",
     )
 ) -> None:
     ctx.obj = Settings(api_url=api_url, token=token)
@@ -220,7 +223,7 @@ def generate_hmac(
     print(f"Environment to setup in server:\nTOKEN_{str(token_id.upper())}_HMAC={hmac_key.hexdigest()}")
 
 
-@cert_app.command(help="")
+@cert_app.command(help="TODO")
 def issue(
     ctx: typer.Context,
     timeout: int = typer.Option(
@@ -230,13 +233,17 @@ def issue(
     format: str = typer.Option(
         "table", "--format", "-f", 
         help="Output format: table, json, or text."
+    ),
+    cert_ids: list[str] = typer.Option(
+        None, "--id", "-i",
+        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
     )
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
 
 
-@cert_app.command(help="")
+@cert_app.command(help="TODO")
 def renew(
     ctx: typer.Context,
     timeout: int = typer.Option(
@@ -246,14 +253,19 @@ def renew(
     format: str = typer.Option(
         "table", "--format", "-f", 
         help="Output format: table, json, or text."
+    ),
+    cert_ids: list[str] = typer.Option(
+        None, "--id", "-i",
+        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
     )
 ) -> None:
+    print(cert_ids)
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
 
-@cert_app.command(help="")
-def get(
+@cert_app.command(help="TODO")
+def list(
     ctx: typer.Context,
     timeout: int = typer.Option(
         360, "--timeout", "-t", 
@@ -262,6 +274,10 @@ def get(
     format: str = typer.Option(
         "table", "--format", "-f", 
         help="Output format: table, json, or text."
+    ),
+    cert_ids: list[str] = typer.Option(
+        None, "--id", "-i",
+        help="Certificate ID pattern, can be specified multiple times. Defaults to all certificates permitted for the current identity"
     )
 ) -> None:
     settings = load_settings(ctx)
@@ -272,6 +288,20 @@ def get(
     
     render(payload, format)
     
+
+@cert_app.command(help="TODO")
+def update_in_place(
+    ctx: typer.Context,
+    dest_dir: str = typer.Option(
+        ..., "--dest-dir", "-d",
+        help=""
+    ),
+    post_hook: str = typer.Option(
+        None, "--post-hook",
+        help="Post-hook script to run after successful update any certificate"
+    )
+) -> None:
+    settings = load_settings(ctx)
 
 # Helper functions
 
@@ -304,7 +334,7 @@ def load_settings(ctx: typer.Context) -> Settings:
 
     if not settings.api_url:
         raise typer.BadParameter(
-            f"Provide --api-url, set CERT_REGISTRY_API_URL environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
+            f"Provide --api-url, set {ENV_VAR_API_URL} environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
         )
     return settings
 

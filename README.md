@@ -13,6 +13,7 @@ TODO
 | `GUNICORN_BIND_PORT` | `number` | :x: | `8080` | TODO |
 | `GUNICORN_WORKERS` | `number` | :x: | `2` | TODO |
 | `GUNICORN_THREADS` | `number` | :x: | `1` | TODO |
+| `GUNICORN_TIMEOUT` | `number` | :x: | `600` | TODO |
 | `LOG_LEVEL` | `string` | :x: | `INFO` | TODO |
 | `LOGS_DIR` | `string` | :x: | `/logs` | TODO |
 | `CONF_FILE` | `string` | :x: | `/config/config.yaml` | TODO |
@@ -26,10 +27,10 @@ TODO
 
 ## Configuration
 TODO
-Application needs config file with defined certs and tokens, example:
+Application requires a configuration file with certificates and identities definitions, here is an example:
 ```yaml
 certs:
-  - id: "example.com"
+  - id: "example"
     email: "admin@example.com"
     pem_filename: "*.example.com"
     domains: 
@@ -53,8 +54,12 @@ identities:
       - "example.com:read"
       - "example.com:renew"
 ```
+Above example indicates that application will have 2 identites:
+* example
+* admin
 
-Above config requires to provide 2 more environments with encrypted tokens for provided identities:
+
+This determines that the application requires 2 more environments with HMAC hash values to be set:
 ```ini
 TOKEN_ADMIN_HMAC="value"
 TOKEN_EXAMPLE_HMAC="value"
