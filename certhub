@@ -7,20 +7,76 @@ import hashlib
 import base64
 import sys
 import binascii
+from enum import Enum
 from getpass import getpass
 from pathlib import Path
 from rich.console import Console
-from rich.table import Table
-from rich import print as rprint
+from rich.table import Table, box
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, List
+from typing import Any, Optional, Dict
 import requests
 
 ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
 
-# App
+class Format(Enum):
+    TABLE = "table"
+    JSON = "json"
+    KEY_VALUE = "kv"
+    VALUE = "value"
+    
+    @classmethod
+    def values(cls) -> list[str]:
+        return [item.value for item in cls]
+    
+    @classmethod
+    def default(cls) -> str:
+        return Format.TABLE.value
+
+
+class Opt:
+    @staticmethod
+    def timeout(default: int = 10) -> Any:
+        return typer.Option(
+            default, "--timeout", "-t",
+            help="API request timeout in seconds",
+        )
+
+    @staticmethod
+    def format(default: str | None = None) -> Any:
+        return typer.Option(
+            default or Format.default(), "--format", "-f",
+            help=f"Output format: {", ".join(Format.values())}",
+        )
+
+    @staticmethod
+    def columns() -> Any:
+        return typer.Option(
+            None, "-c", "--column",
+            help="Specify the column(s) to include, can be repeated to show multiple columns",
+        )
+
+    @staticmethod
+    def patterns() -> Any:
+        return typer.Option(
+            None, "--pattern", "-p",
+            help="Certificate pattern, can be specified multiple times. Defaults to all certificates allowed for the current identity",
+        )
+
+    @staticmethod
+    def force(help_text: str) -> Any:
+        return typer.Option(
+            None, "--force",
+            help=help_text,
+        )
+
+
+@dataclass
+class Settings:
+    api_url: str | None
+    token: str | None
+
 
 app = typer.Typer(
     add_completion=True, 
@@ -32,24 +88,17 @@ app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
 console = Console()
 
-@dataclass
-class Settings:
-    api_url: str | None
-    token: str | None
-    
 
 @app.callback()
 def main(
     ctx: typer.Context,
     api_url: str = typer.Option(
-        "http://localhost:8080",
-        "--base-url",
+        "http://localhost:8080", "--base-url",
         envvar=ENV_VAR_API_URL,
         help=f"API base URL. You can set environment or set API_URL=<value> in {SETTINGS_FILE}",
     ),
     token: str = typer.Option(
-        None,
-        "--token",
+        None, "--token",
         envvar=ENV_VAR_TOKEN,
         help=f"Bearer token. You can set environment or set TOKEN=<value> in {SETTINGS_FILE}",
     )
@@ -107,91 +156,44 @@ class Client():
         
         return response
 
-# Commands
-
-@app.command(help="Statuses for all certificates")
-def health(
-    ctx: typer.Context,
-    exclude_ok: bool = typer.Option(
-        None, "--exclude-ok", 
-        help="Hide certificates with OK status"
-    ),
-    timeout: int = typer.Option(
-        10, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text"
-    )
-) -> None:
-    settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-    params = {}
-    if exclude_ok:
-        params["exclude_ok"] = "true"
-        
-    response = client.request("GET", "/api/health", params=params)
-    payload = parse_response(response) 
-    
-    if payload.get("certs"):
-        payload = payload["certs"]
-    
-    render(payload, format)
-    
+# Commands    
     
 @app.command(help="Versions and author")
 def version(
     ctx: typer.Context,
-    timeout: int = typer.Option(
-        10, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text"
-    )
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     response = client.request("GET", "/api/version")
     payload = parse_response(response)
     
-    render(payload, format)
+    render(payload, format, response.ok, columns)
 
 
 @token_app.command(help="Permitted certificates for current identity")
 def scope(
     ctx: typer.Context,
-    timeout: int = typer.Option(
-        10, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text"
-    )
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     response = client.request("GET", "/api/token/scope")
     payload = parse_response(response)
     
-    render(payload, format)
+    render(payload, format, response.ok, columns)
     
     
 @token_app.command(help="Current identity information (e.g. allowed CIDRs, permissions)")
 def identity(
     ctx: typer.Context,
-    timeout: int = typer.Option(
-        10, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text."
-    )
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
@@ -201,7 +203,7 @@ def identity(
     if payload.get("permissions"):
         payload["permissions"] = [f"{p['scope']}:{p['action']}" for p in payload["permissions"]]
     
-    render(payload, format)
+    render(payload, format, response.ok, columns)
 
 
 @token_app.command(help="Generate TOKEN_<ID>_HMAC value for server configuration") 
@@ -261,70 +263,103 @@ def gen_hmac(
     print(f"TOKEN_{token_id.upper()}_HMAC={hmac_key.hexdigest()}\n")
 
 
-@cert_app.command(help="Issue new certificates for the current identity or selected certificate IDs")
+@cert_app.command(help="Statuses for all certificates")
+def health(
+    ctx: typer.Context,
+    exclude_ok: bool = typer.Option(
+        None, "--exclude-ok", 
+        help="Hide certificates with OK status"
+    ),
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns()
+) -> None:
+    settings = load_settings(ctx)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    
+    params = {}
+    if exclude_ok:
+        params["exclude_ok"] = "true"
+    if patterns:
+        params["cert"] = patterns
+        
+    response = client.request("GET", "/api/health", params=params)
+    payload = parse_response(response) 
+    
+    if payload.get("certs"):
+        payload = payload["certs"]
+    
+    render(payload, format, response.ok, columns)
+    
+
+@cert_app.command(help="Issue new certificates for the current identity or selected pattern")
 def issue(
     ctx: typer.Context,
-    timeout: int = typer.Option(
-        360, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text"
-    ),
-    cert_ids: list[str] = typer.Option(
-        None, "--id", "-i",
-        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
-    )
-) -> None:
-    settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-
-
-@cert_app.command(help="Renew existing certificates for the current identity or selected certificate IDs")
-def renew(
-    ctx: typer.Context,
-    timeout: int = typer.Option(
-        360, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text."
-    ),
-    cert_ids: list[str] = typer.Option(
-        None, "--id", "-i",
-        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
-    )
-) -> None:
-    print(cert_ids)
-    settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-
-@cert_app.command(help="List certificates available for the current identity")
-def list(
-    ctx: typer.Context,
-    timeout: int = typer.Option(
-        360, "--timeout", "-t", 
-        help="API request timeout in seconds"
-    ),
-    format: str = typer.Option(
-        "table", "--format", "-f", 
-        help="Output format: table, json, or text"
-    ),
-    cert_ids: list[str] = typer.Option(
-        None, "--id", "-i",
-        help="Certificate ID (supports patterns), can be specified multiple times. Defaults to all certificates allowed for the current identity"
-    )
+    timeout: int = Opt.timeout(360),
+    format: str = Opt.format(),
+    force: bool = Opt.force("Force reissue of certificate even if it already exists"),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
     
-    response = client.request("GET", "/api/certs")
+    params = {}
+    if force:
+        params["force"] = "true"
+    if patterns:
+        params["cert"] = patterns
+        
+    response = client.request("POST", "/api/certs/issue", params=params)
     payload = parse_response(response)
     
-    render(payload, format)
+    render(payload, format, response.ok, columns)
+
+
+@cert_app.command(help="Renew existing certificates for the current identity or selected pattern")
+def renew(
+    ctx: typer.Context,
+    timeout: int = Opt.timeout(360),
+    format: str = Opt.format(),
+    force: bool = Opt.force("Force certificate renew even if it does not expire"),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns()
+) -> None:
+    settings = load_settings(ctx)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    
+    params = {}
+    if force:
+        params["force"] = "true"
+    if patterns:
+        params["cert"] = patterns
+        
+    response = client.request("POST", "/api/certs/renew", params=params)
+    payload = parse_response(response)
+    
+    render(payload, format, response.ok, columns)
+    
+
+@cert_app.command(help="List certificates available for the current identity or selected pattern")
+def get(
+    ctx: typer.Context,
+    timeout: int = Opt.timeout(360),
+    format: str = Opt.format(),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns()
+) -> None:
+    settings = load_settings(ctx)
+    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    
+    params = {}
+    if patterns:
+        params["cert"] = patterns
+    
+    response = client.request("GET", "/api/certs", params=params)
+    payload = parse_response(response)
+    
+    render(payload, format, response.ok, columns)
     
 
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
@@ -337,9 +372,13 @@ def update_in_place(
     post_hook: str = typer.Option(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expired certificate"
-    )
+    ),
+    format: str = Opt.format(), # TODO - needed?
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
+    # TODO HERE
 
 # Helper functions
 
@@ -352,7 +391,9 @@ def load_settings(ctx: typer.Context) -> Settings:
     if SETTINGS_FILE.exists():
         file_mode = SETTINGS_FILE.stat().st_mode & 0o777
         if file_mode != 0o600:
-            raise typer.BadParameter(f"Invalid permissions for {SETTINGS_FILE}: expected 'rw-------' (600), got {file_mode:o}, use command:\nchmod 600 {SETTINGS_FILE}")
+            raise typer.BadParameter(
+                f"Invalid permissions for {SETTINGS_FILE}: expected 'rw-------' (600), got {file_mode:o}, use command:\nchmod 600 {SETTINGS_FILE}"
+            )
 
         for line in read_file(SETTINGS_FILE).splitlines():
             line = line.strip()
@@ -402,26 +443,26 @@ def read_file(file_path: Path) -> str:
         return file_path.read_text(encoding="ascii", errors="ignore")
 
 
-def _format_kv_block(obj: dict, indent: str = "  ") -> str:
-    lines = []
-    for k in sorted(obj.keys(), key=lambda x: str(x)):
-        v = obj[k]
-        if isinstance(v, (dict, list)):
-            v_str = json.dumps(v, ensure_ascii=False)
-        else:
-            v_str = str(v)
-        lines.append(f"{indent}{k}: {v_str}")
-    return "\n".join(lines)
-
-
-def _render_table_cell(value) -> str:
+def render_table_cell(value) -> str:
+    def format_kv_block(obj: dict, indent: str = "  ") -> str:
+        key_width = max((len(str(k)) for k in obj.keys()), default=0)
+        lines = []
+        for k in sorted(obj.keys(), key=lambda x: str(x)):
+            v = obj[k]
+            if isinstance(v, (dict, list)):
+                v_str = json.dumps(v, ensure_ascii=False)
+            else:
+                v_str = str(v)
+            lines.append(f"{indent}{str(k):<{key_width}} = {v_str}")
+        return "\n".join(lines)
+    
     if value is None:
         return "-"
 
     if isinstance(value, dict):
         if not value:
             return "{}"
-        return _format_kv_block(value, indent="")
+        return format_kv_block(value, indent="")
 
     if isinstance(value, list):
         if not value:
@@ -432,14 +473,14 @@ def _render_table_cell(value) -> str:
             for i, item in enumerate(value, start=1):
                 header = f"• #{i}"
                 blocks.append(header)
-                blocks.append(_format_kv_block(item, indent="  "))
+                blocks.append(format_kv_block(item, indent="  "))
             return "\n".join(blocks)
 
         lines = []
         for item in value:
             if isinstance(item, dict):
                 lines.append("•")
-                lines.append(_format_kv_block(item, indent="  "))
+                lines.append(format_kv_block(item, indent="  "))
             elif isinstance(item, list):
                 lines.append("• " + json.dumps(item, ensure_ascii=False))
             else:
@@ -448,80 +489,125 @@ def _render_table_cell(value) -> str:
 
     return str(value)
 
-# def _render_table_cell(value) -> str:
-#     if value is None:
-#         return "-"
 
-#     if isinstance(value, dict):
-#         if not value:
-#             return "{}"
-#         return _format_kv_block(value, indent="")
+def render(data, format: str, success: bool, columns: list[str] | None) -> None:
+    def convert_val_as_str(val: Any) -> str:
+        if isinstance(val, (dict, list)):
+            return json.dumps(val, ensure_ascii=False)
+        return str(val)
 
-#     if isinstance(value, list):
-#         if not value:
-#             return "(empty)"
+    def render_field(key: Any, val: Any, key_width: int) -> str:
+        key_as_str = str(key)
+        val_as_str = convert_val_as_str(val)
+        return f"{key_as_str:<{key_width}} = {val_as_str}"
 
-#         # list[dict] -> każdy dict jako blok
-#         if all(isinstance(x, dict) for x in value):
-#             blocks = []
-#             for i, item in enumerate(value, start=1):
-#                 header = f"• #{i}"
-#                 blocks.append(header)
-#                 blocks.append(_format_kv_block(item, indent="  "))
-#             return "\n".join(blocks)
-
-#         lines = []
-#         for index, item in enumerate(value):
-#             is_last = len(value) == index + 1
-#             new_line = ""
-            
-#             if isinstance(item, dict):
-#                 #lines.append("•")
-#                 new_line = _format_kv_block(item, indent="  ")
-#             elif isinstance(item, list):
-#                 new_line = json.dumps(item, ensure_ascii=False)
-#             else:
-#                 new_line = item
-            
-#             lines.append(f"{new_line}{", " if not is_last else ""}")
-#         return "".join(lines)
-
-#     return str(value)
-
-
-def render(data, output: str):
-    if output == "json":
-        rprint(json.dumps(data, indent=2, ensure_ascii=False))
+    def emit(value: Any = "") -> None:
+        if success:
+            console.print(value)
+            return
+        if isinstance(value, str):
+            console.print(value, style="red", markup=False, highlight=False)
+            return
+        console.print(value, style="red", highlight=False)
+                    
+    if success:
+        data = filter_data(data, columns)
+    
+    try:
+        format = Format(format)
+    except ValueError:
+        raise typer.BadParameter(f"Unknown format: {format}, must be one of: {(', ').join(Format.values())}")
+    
+    if format == Format.JSON:
+        emit(json.dumps(data, indent=2, ensure_ascii=False))
         return
-
-    if output == "text":
+    elif format == Format.VALUE:
         if isinstance(data, dict):
-            for k, v in data.items():
-                rprint(f"{k}: {v}")
-        else:
-            rprint(data)
+            for val in data.values():
+                emit(convert_val_as_str(val))
+        elif isinstance(data, list):
+            if all(isinstance(item, dict) for item in data):
+                for item in data:
+                    for val in item.values():
+                        emit(convert_val_as_str(val))
+                    if item != data[-1]: # Do not print on last iteration
+                        emit()
+            else:
+                for item in data:
+                    emit(item)
         return
-
-    if output == "table":
+    elif format == Format.KEY_VALUE:
+        if isinstance(data, dict):
+            key_width = max((len(str(key)) for key in data.keys()), default=0)
+            for key, val in data.items():
+                emit(render_field(key, val, key_width))
+        elif isinstance(data, list):
+            if all(isinstance(item, dict) for item in data):
+                key_width = max(
+                    (len(str(key)) for item in data for key in item.keys()),
+                    default=0,
+                )
+                for item in data:
+                    for key, val in item.items():
+                        emit(render_field(key, val, key_width))
+                    if item != data[-1]: # Do not print on last iteration
+                        emit()
+            else:
+                for item in data:
+                    emit(item)
+        else:
+            emit(data)
+        return
+    elif format == Format.TABLE:
         rows = data if isinstance(data, list) else [data]
         if not rows:
-            rprint("(empty)")
             return
 
-        table = Table(show_header=True, header_style="bold", expand=True, show_lines=True)
+        table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
 
         cols = list(rows[0].keys())
         for c in cols:
-            table.add_column(str(c), overflow="fold")  # fold pomaga gdy jest dużo tekstu
+            table.add_column(str(c), overflow="fold")  # fold helps if mucho text
 
         for row in rows:
-            table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+            table.add_row(*[render_table_cell(row.get(c, "")) for c in cols])
 
-        console.print(table)
+        emit(table)
         return
 
-    raise typer.BadParameter("output must be one of: json, text, table")
 
+def filter_data(data: list | dict, columns: list[str] | None) -> Any:
+    if not columns:
+        return data
+
+    available_columns: set[str] = set()
+    
+    if isinstance(data, dict):
+        available_columns = set(data.keys())
+    elif isinstance(data, list):
+        for row in data:
+            if isinstance(row, dict):
+                available_columns.update(row.keys())
+
+    missing_columns = [col for col in columns if col not in available_columns]
+    if missing_columns:
+        possible_columns = ", ".join(sorted(available_columns)) if available_columns else "<none>"
+        missing = ", ".join(missing_columns)
+        raise typer.BadParameter(f"Unknown column(s): {missing}, available choices: {possible_columns}")
+
+    if isinstance(data, list):
+        filtered_data = []
+        for row in data:
+            if isinstance(row, dict):
+                filtered_data.append({col: row.get(col) for col in columns})
+            else:
+                filtered_data.append(row)
+        return filtered_data
+
+    if isinstance(data, dict):
+        return {col: data.get(col) for col in columns}
+
+    return data
 
 if __name__ == "__main__":
     app()

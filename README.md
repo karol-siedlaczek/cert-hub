@@ -32,11 +32,13 @@ Application requires a configuration file with certificates and identities defin
 certs:
   - id: "example"
     email: "admin@example.com"
-    pem_filename: "*.example.com"
     domains: 
       - "*.example.com"
       - "example.com"
     dns_provider: "aws"
+    custom_attrs: # Custom attributes returned by API, can be used by CLI
+      pem_filename: "*.example.com"
+      custom_key: custom_value
 
 identities:
   - id: "admin"

@@ -25,7 +25,7 @@ class Cert:
     id: str
     email: str
     domains: tuple[str, ...]
-    pem_filename: str
+    custom_attrs: dict
     dns_provider: DnsProvider
     
     @classmethod
@@ -38,12 +38,13 @@ class Cert:
         id = get_required("id")
         email = get_required("email")
         domains = get_required("domains")
-        pem_filename = get_required("pem_filename")
+        custom_attrs = data.get("custom_attrs")
         dns_provider_raw = get_required("dns_provider")
         
         Require.type("id", id, str)
         Require.email("email", email)
         Require.type("domains", domains, list)
+        Require.type("custom_attrs", custom_attrs, dict)
         
         for i, domain in enumerate(domains):
             Require.domain(f"domains[{i}]", domain)
@@ -53,7 +54,7 @@ class Cert:
         Require.installed_module("dns_provider", dns_provider.value, dns_provider.get_required_module())
         Require.envs(dns_provider.get_required_envs())
     
-        return cls(id, email, tuple(domains), pem_filename, dns_provider)
+        return cls(id, email, tuple(domains), custom_attrs, dns_provider)
 
     
     def has_permission(self, identity: Identity, action: PermissionAction) -> bool:
@@ -111,7 +112,7 @@ class Cert:
     
     
     def get_full_chain(self) -> str:
-        return f"{self.get_cert()}\n{self.get_chain()}"
+        return f"{self.get_certificate()}\n{self.get_chain()}"
     
 
     def get_chain(self) -> str:
@@ -122,7 +123,7 @@ class Cert:
         return self._read_text(chain_path)
     
     
-    def get_cert(self) -> str:
+    def get_certificate(self) -> str:
         self._require_issued()
         certbot = CertBot.get_from_global_context()
         cert_path = certbot.get_cert_path(self.id)

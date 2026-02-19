@@ -94,7 +94,7 @@ class CertBot:
         
         result = self._run_cmd(cmd)
         if result.returncode != 0:
-            raise CertBotError(self.id, return_code=result.returncode, cmd=cmd, output=result.stderr)
+            raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
     
         
     def get_cert_path(self, cert_name: str) -> Path:
