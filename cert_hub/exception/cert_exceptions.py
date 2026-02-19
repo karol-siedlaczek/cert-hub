@@ -25,7 +25,7 @@ class CertBotError(ApiError):
             "return_code": return_code,
             "output": output
         }
-        super().__init__(502, msg=f"Certbot failed while processing certificate '{cert_name}'", detail=detail, level="error")
+        super().__init__(502, msg=f"CertBot failed while processing certificate '{cert_name}'", detail=detail, level="error")
     
 
 class CertException(Exception):

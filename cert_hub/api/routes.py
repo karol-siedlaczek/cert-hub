@@ -76,22 +76,24 @@ def issue_cert() -> Response:
     certs = query_list("cert", default=["*"])
     force = query_bool("force")
     context = Context.build(certs, PermissionAction.ISSUE)
-    payload = {}
+    payload = []
 
     for cert in context.certs:
         try:
             cert.issue(force)
-            payload[cert.id] = {
+            payload.append({
+                "id": cert.id,
                 "status": CertStatus.ISSUED.value,
                 "msg": f"Successfully issued '{cert}' certificate",
-                "expire_date": cert.get_expire_date_as_str()
-            }
+                "expire_date": cert.get_expire_date_as_str()             
+            })
         except CertException as e:
             log_request(e.msg, level="info")
-            payload[cert.id] = {
+            payload.append({
+                "id": cert.id,
                 "status": e.status.value,
                 "msg": e.msg
-            }
+            })
     return build_response(200, data=payload)
 
 
@@ -100,22 +102,24 @@ def renew_cert() -> Response:
     certs = query_list("cert", default=["*"])
     force = query_bool("force")
     context = Context.build(certs, PermissionAction.RENEW)
-    payload = {}
+    payload = []
     
     for cert in context.certs:
         try:
             cert.renew(force)
-            payload[cert.id] = {
+            payload.append({
+                "id": cert.id,
                 "status": CertStatus.RENEWED.value,
                 "msg": f"Successfully renewed '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()
-            }
+            })
         except CertException as e:
             log_request(e.msg, level="info")
-            payload[cert.id] = {
+            payload.append({
+                "id": cert.id,
                 "status": e.status.value,
                 "msg": e.msg
-            }
+            })
     
     return build_response(200, data=payload)
 
@@ -129,16 +133,15 @@ def get_cert() -> Response:
     for cert in context.certs:
         payload.append({
             "id": cert.id,
-            "pem_filename": cert.pem_filename,
+            "custom_attrs": cert.custom_attrs,
             "domains": cert.domains,
             "expire_date": cert.get_expire_date_as_str(),
             "status": cert.get_status().value,
-            "content": {
-                "chain.pem": cert.get_chain(),
-                "cert.pem": cert.get_cert(),
-                "privkey.pem": cert.get_private_key(),
-            }
+            "chain": cert.get_chain(),
+            "certificate": cert.get_certificate(),
+            "private_key": cert.get_private_key()
         })
+        # TODO - Add handling CertException
     
     return build_response(200, data=payload)
 
