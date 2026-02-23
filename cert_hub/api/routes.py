@@ -21,7 +21,7 @@ def version() -> Response:
     payload = {
         "name": "Cert Hub",
         "author": "karol@siedlaczek.com.pl",
-        "version": "1.0.0",
+        "app": "1.0.0",
         "python": platform.python_version()
     }
     return build_response(200, data=payload)
@@ -29,10 +29,10 @@ def version() -> Response:
 
 @api.route("/api/health", methods=["GET"])
 def health() -> Response:
-    certs = query_list("cert", default=["*"])
+    patterns = query_list("match", default=["*"])
     exclude_ok = query_bool("exclude_ok")
     
-    context = Context.build(certs, PermissionAction.HEALTH)
+    context = Context.build(patterns, PermissionAction.HEALTH)
 
     certs_health = []
     is_critical = False
@@ -49,11 +49,21 @@ def health() -> Response:
         if exclude_ok and status == CertStatus.OK:
             continue
         
-        certs_health.append({ 
-            "id": cert.id, 
-            "status": status.value, 
-            "expire_date": cert.get_expire_date_as_str(),
-        })
+        try:
+            certs_health.append({ 
+                "id": cert.id, 
+                "status": status.value,
+                "msg": f"Certificate '{cert}' is issued",
+                "expire_date": cert.get_expire_date_as_str()
+            })
+        except CertException as e: # Not issued
+            log_request(e.msg, level="info")
+            certs_health.append({
+                "id": cert.id,
+                "status": status.value,
+                "msg": e.msg,
+                "expire_date": None
+            })
     
     if is_critical:
         overall_health = "CRITICAL"
@@ -62,20 +72,19 @@ def health() -> Response:
     else:
         overall_health = "OK"
     
-    return build_response(
-        200, 
-        data={ 
-            "health": overall_health, 
-            "certs": certs_health 
-        }
-    )
+    payload = {
+        "health": overall_health, 
+        "certs": certs_health 
+    }
+    
+    return build_response(200, data=payload)
 
 
 @api.route("/api/certs/issue", methods=["POST"])
 def issue_cert() -> Response:
-    certs = query_list("cert", default=["*"])
+    patterns = query_list("match", default=["*"])
     force = query_bool("force")
-    context = Context.build(certs, PermissionAction.ISSUE)
+    context = Context.build(patterns, PermissionAction.ISSUE)
     payload = []
 
     for cert in context.certs:
@@ -87,21 +96,22 @@ def issue_cert() -> Response:
                 "msg": f"Successfully issued '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()             
             })
-        except CertException as e:
+        except CertException as e: # Already issued
             log_request(e.msg, level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
-                "msg": e.msg
+                "msg": e.msg,
+                "expire_date": cert.get_expire_date_as_str()
             })
     return build_response(200, data=payload)
 
 
 @api.route("/api/certs/renew", methods=["POST"])
 def renew_cert() -> Response:
-    certs = query_list("cert", default=["*"])
+    patterns = query_list("match", default=["*"])
     force = query_bool("force")
-    context = Context.build(certs, PermissionAction.RENEW)
+    context = Context.build(patterns, PermissionAction.RENEW)
     payload = []
     
     for cert in context.certs:
@@ -113,12 +123,13 @@ def renew_cert() -> Response:
                 "msg": f"Successfully renewed '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()
             })
-        except CertException as e:
+        except CertException as e: # Not expiring
             log_request(e.msg, level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
-                "msg": e.msg
+                "msg": e.msg,
+                "expire_date": cert.get_expire_date_as_str()
             })
     
     return build_response(200, data=payload)
@@ -126,22 +137,36 @@ def renew_cert() -> Response:
 
 @api.route("/api/certs", methods=["GET"])
 def get_cert() -> Response:
-    certs = query_list("cert", default=["*"])
-    context = Context.build(certs, PermissionAction.READ)
+    patterns = query_list("match", default=["*"])
+    context = Context.build(patterns, PermissionAction.READ)
     payload = []
     
     for cert in context.certs:
-        payload.append({
-            "id": cert.id,
-            "custom_attrs": cert.custom_attrs,
-            "domains": cert.domains,
-            "expire_date": cert.get_expire_date_as_str(),
-            "status": cert.get_status().value,
-            "chain": cert.get_chain(),
-            "certificate": cert.get_certificate(),
-            "private_key": cert.get_private_key()
-        })
-        # TODO - Add handling CertException
+        try:
+            payload.append({
+                "id": cert.id,
+                "status": cert.get_status().value,
+                "msg": f"Successfully fetched '{cert}' certificate",
+                "custom_attrs": cert.custom_attrs,
+                "domains": cert.domains,
+                "expire_date": cert.get_expire_date_as_str(),
+                "chain": cert.get_chain(),
+                "certificate": cert.get_certificate(),
+                "private_key": cert.get_private_key(),
+            })
+        except CertException as e: # Not issued
+            log_request(e.msg, level="info")
+            payload.append({
+                "id": cert.id,
+                "status": e.status.value,
+                "msg": e.msg,
+                "custom_attrs": cert.custom_attrs,
+                "domains": cert.domains,
+                "expire_date": None,
+                "chain": None,
+                "certificate": None,
+                "private_key": None,
+            })
     
     return build_response(200, data=payload)
 

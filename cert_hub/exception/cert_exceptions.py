@@ -24,7 +24,7 @@ class CertBotError(ApiError):
             "cmd": cmd,
             "return_code": return_code,
             "output": output
-        }
+        } # TODO - Test CLI run when first cert is successful and another raises CertBotError
         super().__init__(502, msg=f"CertBot failed while processing certificate '{cert_name}'", detail=detail, level="error")
     
 
