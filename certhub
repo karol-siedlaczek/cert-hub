@@ -451,7 +451,7 @@ def update_in_place(
         if not certs_dir.exists():
             raise CertUpdateException(f"Directory provided by -d/--dest-dir does not exist: {certs_dir}")
         if not certs_dir.is_dir():
-            raise CertUpdateException(f"Value provided -d/--dest-dir is not a directory: {certs_dir}")
+            raise CertUpdateException(f"Value provided by -d/--dest-dir is not a directory: {certs_dir}")
         
         params = {}
         if patterns:
@@ -463,11 +463,14 @@ def update_in_place(
         
         if not response.ok:
             render(payload, format, response.ok, columns)
-            raise CertUpdateException(f"Failed to fetch certificates: {payload}")
+            raise CertUpdateException(f"Failed to fetch certificates: {payload}") # TODO - CHANGE
     except CertUpdateException as e:
         if is_send_nagios_passive:
-            Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.CRITICAL, f"CRITICAL: {str(e)}")
+            Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.UNKNOWN, f"UNKNOWN: {str(e)}")
         raise typer.BadParameter(e)
+    except:
+        pass
+        # TODO - FOR CRITICALS
     
     any_updated = False
     cert_date_format = "%Y-%m-%d %H:%M"
