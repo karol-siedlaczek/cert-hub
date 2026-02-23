@@ -48,6 +48,7 @@ def build_response(
     payload = {
         "http_code": code,
         "http_status": HTTPStatus(code).phrase,
+        "method": request.method,
         "path": request.path,
         **payload,
         "timestamp": datetime.now(timezone.utc).isoformat()

@@ -119,10 +119,10 @@ class CertBot:
         
         result = subprocess.run(
             args, 
-            shell=shell, 
             stdin=subprocess.DEVNULL, 
             stderr=subprocess.PIPE, 
             stdout=subprocess.PIPE, 
+            shell=shell, 
             text=True, 
             #executable="/bin/bash",
             timeout=timeout

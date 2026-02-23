@@ -1,24 +1,67 @@
 #!/usr/bin/env python3
 
+# Karol Siedlaczek 2026
+
+import os
 import json
+import shlex
 import typer
 import hmac
 import hashlib
 import base64
 import sys
 import binascii
+import subprocess
+from datetime import datetime, timezone
 from enum import Enum
+from fnmatch import fnmatch
 from getpass import getpass
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table, box
 from dataclasses import dataclass
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, Sequence
 import requests
+from cryptography import x509
 
 ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
+
+
+class CertUpdateException(Exception):
+    pass
+
+
+class Nagios(Enum):
+    NSCA_CMD = "/usr/sbin/send_nsca"
+    OK = 0
+    WARNING = 1
+    CRITICAL = 2
+    UNKNOWN = 3
+    
+    @staticmethod
+    def send_passive(
+        nagios_server: str, 
+        nagios_host: str, 
+        nagios_check: str, 
+        status: "Nagios",
+        msg: str
+    ) -> str:
+        args = [
+            "echo",
+            "-e",
+            f"{nagios_host}\t{nagios_check}\t{status.value}\t{msg}",
+            "|",
+            Nagios.NSCA_CMD.value,
+            "-H",
+            nagios_server
+        ]
+        result = run_cmd(args, shell=True)
+        if result.returncode != 0:
+            raise typer.BadParameter(f"Failed to send nagios passive, command: {args}, error: {result.stderr}")
+        return result.stdout
+
 
 class Format(Enum):
     TABLE = "table"
@@ -124,7 +167,7 @@ class Client():
         session.headers.update({"Accept": "application/json"})
         
         try:
-            session.request("GET", f"{base_url}/ping")
+            session.request("GET", f"{base_url}/ping", timeout=10)
         except requests.RequestException as e:
             typer.secho(
                 f"Error connecting to API server: {e}",
@@ -132,8 +175,7 @@ class Client():
                 err=True,
             )
             raise typer.Exit(code=1)
-
-        return cls(base_url, session, timeout)
+        return cls(base_url, session, timeout or 10)
     
     
     def request(
@@ -266,14 +308,14 @@ def gen_hmac(
 @cert_app.command(help="Statuses for all certificates")
 def health(
     ctx: typer.Context,
-    exclude_ok: bool = typer.Option(
-        None, "--exclude-ok", 
-        help="Hide certificates with OK status"
-    ),
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
-    columns: list[str] = Opt.columns()
+    columns: list[str] = Opt.columns(),
+    exclude_ok: bool = typer.Option(
+        None, "--exclude-ok", 
+        help="Hide certificates with OK status"
+    )
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
@@ -282,7 +324,7 @@ def health(
     if exclude_ok:
         params["exclude_ok"] = "true"
     if patterns:
-        params["cert"] = patterns
+        params["match"] = patterns
         
     response = client.request("GET", "/api/health", params=params)
     payload = parse_response(response) 
@@ -298,9 +340,9 @@ def issue(
     ctx: typer.Context,
     timeout: int = Opt.timeout(360),
     format: str = Opt.format(),
-    force: bool = Opt.force("Force reissue of certificate even if it already exists"),
     patterns: list[str] = Opt.patterns(),
-    columns: list[str] = Opt.columns()
+    columns: list[str] = Opt.columns(),
+    force: bool = Opt.force("Force reissue of certificate even if it already exists")
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
@@ -309,7 +351,7 @@ def issue(
     if force:
         params["force"] = "true"
     if patterns:
-        params["cert"] = patterns
+        params["match"] = patterns
         
     response = client.request("POST", "/api/certs/issue", params=params)
     payload = parse_response(response)
@@ -322,9 +364,9 @@ def renew(
     ctx: typer.Context,
     timeout: int = Opt.timeout(360),
     format: str = Opt.format(),
-    force: bool = Opt.force("Force certificate renew even if it does not expire"),
     patterns: list[str] = Opt.patterns(),
-    columns: list[str] = Opt.columns()
+    columns: list[str] = Opt.columns(),
+    force: bool = Opt.force("Force certificate renew even if it does not expire")
 ) -> None:
     settings = load_settings(ctx)
     client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
@@ -333,7 +375,7 @@ def renew(
     if force:
         params["force"] = "true"
     if patterns:
-        params["cert"] = patterns
+        params["match"] = patterns
         
     response = client.request("POST", "/api/certs/renew", params=params)
     payload = parse_response(response)
@@ -354,7 +396,7 @@ def get(
     
     params = {}
     if patterns:
-        params["cert"] = patterns
+        params["match"] = patterns
     
     response = client.request("GET", "/api/certs", params=params)
     payload = parse_response(response)
@@ -365,6 +407,10 @@ def get(
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
 def update_in_place(
     ctx: typer.Context,
+    timeout: int = Opt.timeout(10),
+    format: str = Opt.format(),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns(),
     dest_dir: str = typer.Option(
         ..., "--dest-dir", "-d",
         help="Directory containing certificate files to check and update"
@@ -373,12 +419,187 @@ def update_in_place(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expired certificate"
     ),
-    format: str = Opt.format(), # TODO - needed?
-    patterns: list[str] = Opt.patterns(),
-    columns: list[str] = Opt.columns()
-) -> None:
+    nagios_server: str = typer.Option(
+        None, "--nagios-server",
+        help=""  
+    ),
+    nagios_host: str = typer.Option(
+        None, "--nagios-host",
+        help=""
+    ),
+    nagios_check: str = typer.Option(
+        None, '--nagios-check',
+        help=""
+    )
+) -> None: 
     settings = load_settings(ctx)
-    # TODO HERE
+    has_any_nagios_arg = any([nagios_server, nagios_host, nagios_check])
+    is_send_nagios_passive = all([nagios_server, nagios_host, nagios_check])
+    
+    try:
+        if has_any_nagios_arg:
+            if not is_send_nagios_passive:
+                raise CertUpdateException(
+                    "To send passive to Nagios with command result options --nagios-server, --nagios-host and --nagios-check must be provided together"
+                )
+            send_nsca_path = Path(Nagios.NSCA_CMD.value)
+            if not (send_nsca_path.exists() and os.access(send_nsca_path, os.X_OK)):
+                raise CertUpdateException(f"Cannot send passive to Nagios, {Nagios.NSCA_CMD.value} not found or not executable")
+        
+        certs_dir = Path(dest_dir)
+        
+        if not certs_dir.exists():
+            raise CertUpdateException(f"Directory provided by -d/--dest-dir does not exist: {certs_dir}")
+        if not certs_dir.is_dir():
+            raise CertUpdateException(f"Value provided -d/--dest-dir is not a directory: {certs_dir}")
+        
+        params = {}
+        if patterns:
+            params["match"] = patterns
+        
+        client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+        response = client.request("GET", "/api/certs", params=params)
+        payload = parse_response(response)
+        
+        if not response.ok:
+            render(payload, format, response.ok, columns)
+            raise CertUpdateException(f"Failed to fetch certificates: {payload}")
+    except CertUpdateException as e:
+        if is_send_nagios_passive:
+            Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.CRITICAL, f"CRITICAL: {str(e)}")
+        raise typer.BadParameter(e)
+    
+    any_updated = False
+    cert_date_format = "%Y-%m-%d %H:%M"
+    updated_files: list[str] = []
+    results: list[dict[str, Any]] = []
+
+    for cert in payload:
+        cert_id = cert.get("id", "<unknown>")
+        expire_date_str = cert.get("expire_date")
+        if not expire_date_str:
+            results.append({
+                "cert_id": cert_id,
+                "status": "skipped: missing_expire_date",
+                "expire_date": None,
+                "local_path": None,
+                "updated": False,
+            })
+            continue
+        
+        try:
+            api_expire_date = datetime.strptime(expire_date_str, cert_date_format).replace(tzinfo=timezone.utc)
+        except ValueError:
+            results.append({
+                "cert_id": cert_id,
+                "status": "skipped: invalid_expire_date",
+                "expire_date": expire_date_str,
+                "local_path": None,
+                "updated": False,
+            })
+            continue
+        
+        try:
+            pem_filename = dict(cert.get("custom_attrs"))["pem_filename"]
+        except (TypeError, KeyError):
+            results.append({
+                "cert_id": cert_id,
+                "status": "skipped: missing_pem_filename",
+                "expire_date": expire_date_str,
+                "local_path": None,
+                "updated": False,
+            })
+            continue
+        
+        certificate = cert.get("certificate")
+        if not certificate:
+            default_path = certs_dir / (pem_filename if pem_filename.endswith(".pem") else f"{pem_filename}.pem")
+            results.append({
+                "cert_id": cert_id,
+                "status": "skipped: missing_certificate",
+                "expire_date": expire_date_str,
+                "local_path": str(default_path),
+                "updated": False,
+            })
+            continue
+        
+        chain = cert.get("chain")
+        private_key = cert.get("private_key")
+        pem_parts = [part.strip() for part in [certificate, chain, private_key] if part]
+        pem_bundle = "\n".join(pem_parts) + "\n"
+        
+        candidate_names = [pem_filename]
+        if not pem_filename.endswith(".pem"):
+            candidate_names.append(f"{pem_filename}.pem")
+        
+        matching_paths: list[Path] = []
+        for cert_file_path in certs_dir.iterdir():
+            if not cert_file_path.is_file():
+                continue
+            if any(fnmatch(cert_file_path.name, candidate) for candidate in candidate_names):
+                matching_paths.append(cert_file_path)
+
+        if not matching_paths:
+            if any(ch in pem_filename for ch in {"*", "?", "["}):
+                new_filename = f"{cert_id}.pem"
+            else:
+                new_filename = pem_filename if pem_filename.endswith(".pem") else f"{pem_filename}.pem"
+            new_path = certs_dir / new_filename
+            new_path.write_text(pem_bundle, encoding="utf-8")
+            updated_files.append(str(new_path))
+            any_updated = True
+            results.append({
+                "cert_id": cert_id,
+                "status": "created",
+                "expire_date": expire_date_str,
+                "local_path": str(new_path),
+                "updated": True,
+            })
+            continue
+        
+        for cert_file_path in matching_paths:
+            local_expire_date = get_cert_expire_date(cert_file_path)
+            if not local_expire_date:
+                results.append({
+                    "cert_id": cert_id,
+                    "status": "skipped: local_expire_not_found",
+                    "expire_date": expire_date_str,
+                    "local_path": str(cert_file_path),
+                    "updated": False,
+                })
+                continue
+            if api_expire_date <= local_expire_date:
+                results.append({
+                    "cert_id": cert_id,
+                    "status": "up_to_date",
+                    "expire_date": expire_date_str,
+                    "local_path": str(cert_file_path),
+                    "updated": False,
+                })
+                continue
+            
+            cert_file_path.write_text(pem_bundle, encoding="utf-8")
+            updated_files.append(str(cert_file_path))
+            any_updated = True
+            results.append({
+                "cert_id": cert_id,
+                "status": "updated",
+                "expire_date": expire_date_str,
+                "local_path": str(cert_file_path),
+                "updated": True,
+            })
+    
+        
+    if any_updated and post_hook:
+        result = run_cmd(post_hook, shell=True)
+        if result.returncode != 0:
+            raise typer.BadParameter(f"Failed to run post-hook '{post_hook}', error: {result.stderr}")
+    
+    render(results, format, True, columns)
+    if is_send_nagios_passive:
+        msg = f"OK: update-in-place completed, updated={len(updated_files)}"
+        Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.OK, msg)
+
 
 # Helper functions
 
@@ -418,7 +639,7 @@ def load_settings(ctx: typer.Context) -> Settings:
     return settings
 
 
-def parse_response(response: requests.Response) -> dict:
+def parse_response(response: requests.Response) -> dict | list[dict]:
     try:
         payload = response.json()
     except ValueError:
@@ -441,6 +662,33 @@ def read_file(file_path: Path) -> str:
         return file_path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return file_path.read_text(encoding="ascii", errors="ignore")
+
+
+def get_cert_expire_date(cert_file_path: Path) -> datetime | None:
+    pem_content = read_file(cert_file_path)
+    begin_marker = "-----BEGIN CERTIFICATE-----"
+    end_marker = "-----END CERTIFICATE-----"
+    cert_start = pem_content.find(begin_marker)
+    cert_end = pem_content.find(end_marker, cert_start)
+    if cert_start == -1 or cert_end == -1:
+        return None
+    
+    cert_end += len(end_marker)
+    cert_pem = pem_content[cert_start:cert_end].encode("utf-8")
+    
+    try:
+        cert = x509.load_pem_x509_certificate(cert_pem)
+    except ValueError as e:
+        raise CertUpdateException(f"Cannot parse local certificate '{cert_file_path}': {e}")
+    
+    expire_date_utc = getattr(cert, "not_valid_after_utc", None)
+    if expire_date_utc is not None:
+        return expire_date_utc.astimezone(timezone.utc)
+    
+    expire_date = cert.not_valid_after
+    if expire_date.tzinfo is None:
+        expire_date = expire_date.replace(tzinfo=timezone.utc)
+    return expire_date.astimezone(timezone.utc)
 
 
 def render_table_cell(value) -> str:
@@ -608,6 +856,38 @@ def filter_data(data: list | dict, columns: list[str] | None) -> Any:
         return {col: data.get(col) for col in columns}
 
     return data
+
+
+def run_cmd(
+    args: Sequence[str] | str,
+    *,
+    shell: bool = True,
+    timeout: Optional[int] = 15
+) -> subprocess.CompletedProcess[str]:
+    cmd: str | list[str]
+    if shell:
+        if isinstance(args, str):
+            cmd = args
+        else:
+            cmd = " ".join(shlex.quote(str(a)) for a in args)
+    else:
+        if isinstance(args, str):
+            cmd = shlex.split(args)
+        else:
+            cmd = [str(a) for a in args]
+    
+    result = subprocess.run(
+        cmd,
+        stdin=subprocess.DEVNULL, 
+        stderr=subprocess.PIPE, 
+        stdout=subprocess.PIPE, 
+        text=True,
+        shell=shell,
+        executable="/bin/bash",
+        timeout=timeout
+    )
+    return result
+
 
 if __name__ == "__main__":
     app()
