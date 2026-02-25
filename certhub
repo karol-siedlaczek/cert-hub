@@ -14,7 +14,6 @@ import binascii
 import subprocess
 from datetime import datetime, timezone
 from enum import Enum
-from fnmatch import fnmatch
 from getpass import getpass
 from pathlib import Path
 from rich.console import Console
@@ -487,7 +486,7 @@ def update_in_place(
                 "cert_id": cert_id,
                 "code": ExitCode.UNKNOWN,
                 "result": "skipped: missing_pem_filename",
-                "expire_date": expire_date_str,
+                "expire_date": None,
                 "local_path": None,
                 "updated": False,
             })
@@ -501,7 +500,7 @@ def update_in_place(
                 "cert_id": cert_id,
                 "code": ExitCode.CRITICAL,
                 "result": "skipped: missing_certificate",
-                "expire_date": expire_date_str,
+                "expire_date": None,
                 "local_path": str(certs_dir / pem_filename),
                 "updated": False,
             })
@@ -558,12 +557,13 @@ def update_in_place(
             })
             continue
         else:
-            local_expire_date = get_cert_expire_date(local_pem_file)
-            if not local_expire_date:
+            try:
+                local_expire_date = get_cert_expire_date(local_pem_file)
+            except Exception as e:
                 results.append({
                     "cert_id": cert_id,
                     "code": ExitCode.WARNING,
-                    "result": "skipped: local_expire_not_found",
+                    "result": f"skipped: cannot retrieve local expire_date {e}",
                     "expire_date": expire_date_str,
                     "local_path": str(local_pem_file),
                     "updated": False
@@ -597,7 +597,7 @@ def update_in_place(
         result = run_cmd(post_hook, shell=True)
         if result.returncode != 0:
             data = {
-                "msg": "Failed to run post-hook after successful local certificate update",
+                "msg": "Failed to run post-hook after successful local certificates update",
                 "error": result.stderr,
                 "return_code": result.returncode,
                 "cmd": post_hook
@@ -611,9 +611,9 @@ def update_in_place(
     if nagios:
         exit_code = ExitCode.OK # TODO - Check if results contains any bad status
         nagios.send_passive(f"{exit_code.name}: TODO", exit_code)
-        
+    
+    # Todo - Raises error, because provided "status" contains non-serializable ExitCode objects
     return result.render_and_exit(columns)
-
 
 # Helper functions
 
@@ -660,14 +660,14 @@ def read_file(file_path: Path) -> str:
         return file_path.read_text(encoding="ascii", errors="ignore")
 
 
-def get_cert_expire_date(cert_file_path: Path) -> datetime | None:
+def get_cert_expire_date(cert_file_path: Path) -> datetime:
     pem_content = read_file(cert_file_path)
     begin_marker = "-----BEGIN CERTIFICATE-----"
     end_marker = "-----END CERTIFICATE-----"
     cert_start = pem_content.find(begin_marker)
     cert_end = pem_content.find(end_marker, cert_start)
     if cert_start == -1 or cert_end == -1:
-        return None
+        raise ValueError(f"File '{cert_file_path}' does not contain a valid PEM certificate block")
     
     cert_end += len(end_marker)
     cert_pem = pem_content[cert_start:cert_end].encode("utf-8")
@@ -675,7 +675,7 @@ def get_cert_expire_date(cert_file_path: Path) -> datetime | None:
     try:
         cert = x509.load_pem_x509_certificate(cert_pem)
     except ValueError as e:
-        raise CertUpdateException(f"Cannot parse local certificate '{cert_file_path}': {e}")
+        raise ValueError(f"Cannot parse certificate from file '{cert_file_path}': {e}")
     
     expire_date_utc = getattr(cert, "not_valid_after_utc", None)
     if expire_date_utc is not None:
