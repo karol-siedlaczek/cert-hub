@@ -1,13 +1,16 @@
-FROM python:3.12-alpine
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY app/ .
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip3 install -r requirements.txt --no-cache-dir
+COPY cert_hub ./cert_hub
+COPY wsgi.py gunicorn.conf.py ./
 
-CMD ["gunicorn", "wsgi:app"]
+EXPOSE 8080
 
-
-  #--access-logfile - \
-  # --error-logfile - \
+CMD ["gunicorn", "wsgi:app", "-c", "gunicorn.conf.py"]
