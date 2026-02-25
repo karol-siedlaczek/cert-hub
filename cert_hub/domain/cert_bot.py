@@ -16,7 +16,6 @@ class CertBot:
     work_dir: Path
     logs_dir: Path
     conf_dir: Path
-    lock_dir: Path
     exe_path: Path
     renew_before_days: int
     base_args: Sequence[str]
@@ -32,14 +31,12 @@ class CertBot:
         work_dir = base_dir / "work"
         logs_dir = base_dir / "logs"
         conf_dir = base_dir / "config"
-        lock_dir = base_dir / "lock"
         
         return cls(
             acme_server = acme_server,
             work_dir = work_dir,
             logs_dir = logs_dir,
             conf_dir = conf_dir,
-            lock_dir = lock_dir,
             exe_path = exe_path,
             renew_before_days = renew_before_days,
             base_args = [
