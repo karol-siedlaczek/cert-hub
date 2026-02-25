@@ -20,48 +20,22 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table, box
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, Sequence
+from typing import Any, Optional, Dict, Sequence, NoReturn, ClassVar
 import requests
 from cryptography import x509
 
 ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
+GLOBAL_FORMAT = None
 
 
-class CertUpdateException(Exception):
-    pass
-
-
-class Nagios(Enum):
-    NSCA_CMD = "/usr/sbin/send_nsca"
+class ExitCode(Enum):
     OK = 0
     WARNING = 1
     CRITICAL = 2
     UNKNOWN = 3
     
-    @staticmethod
-    def send_passive(
-        nagios_server: str, 
-        nagios_host: str, 
-        nagios_check: str, 
-        status: "Nagios",
-        msg: str
-    ) -> str:
-        args = [
-            "echo",
-            "-e",
-            f"{nagios_host}\t{nagios_check}\t{status.value}\t{msg}",
-            "|",
-            Nagios.NSCA_CMD.value,
-            "-H",
-            nagios_server
-        ]
-        result = run_cmd(args, shell=True)
-        if result.returncode != 0:
-            raise typer.BadParameter(f"Failed to send nagios passive, command: {args}, error: {result.stderr}")
-        return result.stdout
-
 
 class Format(Enum):
     TABLE = "table"
@@ -78,6 +52,12 @@ class Format(Enum):
         return Format.TABLE.value
 
 
+@dataclass
+class Settings:
+    api_url: str | None
+    token: str | None
+        
+    
 class Opt:
     @staticmethod
     def timeout(default: int = 10) -> Any:
@@ -115,12 +95,6 @@ class Opt:
         )
 
 
-@dataclass
-class Settings:
-    api_url: str | None
-    token: str | None
-
-
 app = typer.Typer(
     add_completion=True, 
     help="CLI for managing certificates in Cert Hub"
@@ -150,6 +124,51 @@ def main(
 
 # Client
 
+@dataclass
+class Nagios():
+    NSCA_CMD: ClassVar[str] = "/usr/sbin/send_nsca"
+    server: str
+    hostname: str
+    service: str
+    format: Format
+    
+    @classmethod
+    def from_options(cls, server: str, hostname: str, service: str, format: Format) -> "Nagios | None":
+        if not any((server, hostname, service)):
+            return None
+            
+        if not all([server, hostname, service]):
+            raise typer.BadParameter(
+                "To send passive check result to Nagios options --nagios-server, --nagios-hostname and --nagios-service must be provided together"
+            )
+        
+        nsca_cmd_path = Path(Nagios.NSCA_CMD)
+        
+        if not (nsca_cmd_path.exists() and os.access(nsca_cmd_path, os.X_OK)):
+            raise typer.BadParameter(
+                f"Failed to setup sending passive check results to Nagios: Path '{nsca_cmd_path}' not found or not executable"
+            )
+
+        return cls(server, hostname, service, format)
+    
+    
+    def send_passive(self, msg: str, code: ExitCode) -> str:
+        cmd = f"echo -e \"{self.hostname}\t{self.service}\t{code.value}\t{msg}\" | {Nagios.NSCA_CMD} -H {self.server}"
+        
+        result = run_cmd(cmd, shell=True)
+        if result.returncode != 0:
+            data = {
+                "msg": "Failed to send passive check result to Nagios",
+                "error": result.stderr,
+                "return_code": result.returncode,
+                "cmd": cmd
+            }
+            result = Result(data, ExitCode.CRITICAL)
+            return result.render_and_exit()
+            
+        return result.stdout
+    
+
 @dataclass(frozen=True)
 class Client():
     base_url: str
@@ -157,7 +176,15 @@ class Client():
     timeout: int
     
     @classmethod
-    def init(cls, base_url: str, token: Optional[str] = None, *, timeout: int) -> "Client":
+    def init(
+        cls, 
+        base_url: str, 
+        token: Optional[str] = None, 
+        *,
+        timeout: int, 
+        format: Format,
+        nagios: Nagios = None
+    ) -> "Client":
         base_url = base_url.rstrip("/")
         session = requests.Session()
         
@@ -169,12 +196,14 @@ class Client():
         try:
             session.request("GET", f"{base_url}/ping", timeout=10)
         except requests.RequestException as e:
-            typer.secho(
-                f"Error connecting to API server: {e}",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=1)
+            msg = "Error connecting to API server"
+            exit_code = ExitCode.CRITICAL
+            
+            if nagios:
+                nagios.send_passive(f"{exit_code.name}: {msg}, error: {e}", exit_code)
+            result = Result({"msg": msg, "error": str(e)}, format, exit_code)
+            return result.render_and_exit()
+            
         return cls(base_url, session, timeout or 10)
     
     
@@ -197,6 +226,7 @@ class Client():
         )
         
         return response
+    
 
 # Commands    
     
@@ -208,11 +238,11 @@ def version(
     columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
     response = client.request("GET", "/api/version")
-    payload = parse_response(response)
     
-    render(payload, format, response.ok, columns)
+    result = Result(response, format)
+    return result.render_and_exit(columns)
 
 
 @token_app.command(help="Permitted certificates for current identity")
@@ -223,11 +253,11 @@ def scope(
     columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
     response = client.request("GET", "/api/token/scope")
-    payload = parse_response(response)
     
-    render(payload, format, response.ok, columns)
+    result = Result(response, format)
+    return result.render_and_exit(columns)
     
     
 @token_app.command(help="Current identity information (e.g. allowed CIDRs, permissions)")
@@ -238,14 +268,14 @@ def identity(
     columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
     response = client.request("GET", "/api/token/identity")
-    payload = parse_response(response)
     
-    if payload.get("permissions"):
-        payload["permissions"] = [f"{p['scope']}:{p['action']}" for p in payload["permissions"]]
+    result = Result(response, format)
+    if result.data.get("permissions"):
+        result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
     
-    render(payload, format, response.ok, columns)
+    return result.render_and_exit(columns)
 
 
 @token_app.command(help="Generate TOKEN_<ID>_HMAC value for server configuration") 
@@ -318,21 +348,18 @@ def health(
     )
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-    params = {}
-    if exclude_ok:
-        params["exclude_ok"] = "true"
-    if patterns:
-        params["match"] = patterns
-        
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
+    params = {
+        **({"exclude_ok": "true"} if exclude_ok else {}),
+        **({"match": patterns} if patterns else {})
+    }
     response = client.request("GET", "/api/health", params=params)
-    payload = parse_response(response) 
     
-    if payload.get("certs"):
-        payload = payload["certs"]
+    result = Result(response, format)
+    if result.data.get("certs"):
+        result.data = result.data["certs"] 
     
-    render(payload, format, response.ok, columns)
+    return result.render_and_exit(columns)
     
 
 @cert_app.command(help="Issue new certificates for the current identity or selected pattern")
@@ -345,18 +372,15 @@ def issue(
     force: bool = Opt.force("Force reissue of certificate even if it already exists")
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-    params = {}
-    if force:
-        params["force"] = "true"
-    if patterns:
-        params["match"] = patterns
-        
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
+    params = {
+        **({"force": "true"} if force else {}),
+        **({"match": patterns} if patterns else {})
+    }
     response = client.request("POST", "/api/certs/issue", params=params)
-    payload = parse_response(response)
     
-    render(payload, format, response.ok, columns)
+    result = Result(response, format)
+    return result.render_and_exit(columns)
 
 
 @cert_app.command(help="Renew existing certificates for the current identity or selected pattern")
@@ -369,18 +393,15 @@ def renew(
     force: bool = Opt.force("Force certificate renew even if it does not expire")
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-    params = {}
-    if force:
-        params["force"] = "true"
-    if patterns:
-        params["match"] = patterns
-        
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
+    params = {
+        **({"force": "true"} if force else {}),
+        **({"match": patterns} if patterns else {})
+    }
     response = client.request("POST", "/api/certs/renew", params=params)
-    payload = parse_response(response)
     
-    render(payload, format, response.ok, columns)
+    result = Result(response, format)
+    return result.render_and_exit(columns)
     
 
 @cert_app.command(help="List certificates available for the current identity or selected pattern")
@@ -392,16 +413,14 @@ def get(
     columns: list[str] = Opt.columns()
 ) -> None:
     settings = load_settings(ctx)
-    client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-    
-    params = {}
-    if patterns:
-        params["match"] = patterns
-    
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format)
+    params = {
+        **({"match": patterns} if patterns else {})
+    }
     response = client.request("GET", "/api/certs", params=params)
-    payload = parse_response(response)
     
-    render(payload, format, response.ok, columns)
+    result = Result(response, format)
+    return result.render_and_exit(columns)
     
 
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
@@ -423,185 +442,177 @@ def update_in_place(
         None, "--nagios-server",
         help=""  
     ),
-    nagios_host: str = typer.Option(
+    nagios_hostname: str = typer.Option(
         None, "--nagios-host",
         help=""
     ),
-    nagios_check: str = typer.Option(
-        None, '--nagios-check',
+    nagios_service: str = typer.Option(
+        None, '--nagios-service',
         help=""
     )
 ) -> None: 
     settings = load_settings(ctx)
-    has_any_nagios_arg = any([nagios_server, nagios_host, nagios_check])
-    is_send_nagios_passive = all([nagios_server, nagios_host, nagios_check])
+    nagios = Nagios.from_options(nagios_server, nagios_hostname, nagios_service, format)
+    certs_dir = Path(dest_dir)
     
-    try:
-        if has_any_nagios_arg:
-            if not is_send_nagios_passive:
-                raise CertUpdateException(
-                    "To send passive to Nagios with command result options --nagios-server, --nagios-host and --nagios-check must be provided together"
-                )
-            send_nsca_path = Path(Nagios.NSCA_CMD.value)
-            if not (send_nsca_path.exists() and os.access(send_nsca_path, os.X_OK)):
-                raise CertUpdateException(f"Cannot send passive to Nagios, {Nagios.NSCA_CMD.value} not found or not executable")
-        
-        certs_dir = Path(dest_dir)
-        
-        if not certs_dir.exists():
-            raise CertUpdateException(f"Directory provided by -d/--dest-dir does not exist: {certs_dir}")
-        if not certs_dir.is_dir():
-            raise CertUpdateException(f"Value provided by -d/--dest-dir is not a directory: {certs_dir}")
-        
-        params = {}
-        if patterns:
-            params["match"] = patterns
-        
-        client = Client.init(base_url=settings.api_url, token=settings.token, timeout=timeout)
-        response = client.request("GET", "/api/certs", params=params)
-        payload = parse_response(response)
-        
-        if not response.ok:
-            render(payload, format, response.ok, columns)
-            raise CertUpdateException(f"Failed to fetch certificates: {payload}") # TODO - CHANGE
-    except CertUpdateException as e:
-        if is_send_nagios_passive:
-            Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.UNKNOWN, f"UNKNOWN: {str(e)}")
-        raise typer.BadParameter(e)
-    except:
-        pass
-        # TODO - FOR CRITICALS
+    if not certs_dir.exists():
+        raise typer.BadParameter(f"Directory provided by -d/--dest-dir does not exist: {certs_dir}")
+    if not certs_dir.is_dir():
+        raise typer.BadParameter(f"Value provided by -d/--dest-dir is not a directory: {certs_dir}")
+    
+    params = {
+        **({"match": patterns} if patterns else {})
+    }
+    
+    client = Client.init(settings.api_url, settings.token, timeout=timeout, format=format, nagios=nagios)
+    response = client.request("GET", "/api/certs", params=params)
+    result = Result(response, format)
+    
+    if not response.ok:
+        if nagios:
+            nagios.send_passive(f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}", ExitCode.CRITICAL)
+        result.render_and_exit()
     
     any_updated = False
-    cert_date_format = "%Y-%m-%d %H:%M"
-    updated_files: list[str] = []
+    updated_certs: list[str] = []
     results: list[dict[str, Any]] = []
 
-    for cert in payload:
-        cert_id = cert.get("id", "<unknown>")
-        expire_date_str = cert.get("expire_date")
-        if not expire_date_str:
-            results.append({
-                "cert_id": cert_id,
-                "status": "skipped: missing_expire_date",
-                "expire_date": None,
-                "local_path": None,
-                "updated": False,
-            })
-            continue
-        
-        try:
-            api_expire_date = datetime.strptime(expire_date_str, cert_date_format).replace(tzinfo=timezone.utc)
-        except ValueError:
-            results.append({
-                "cert_id": cert_id,
-                "status": "skipped: invalid_expire_date",
-                "expire_date": expire_date_str,
-                "local_path": None,
-                "updated": False,
-            })
-            continue
+    for cert in result.data:
+        cert_id = cert.get("id")
         
         try:
             pem_filename = dict(cert.get("custom_attrs"))["pem_filename"]
         except (TypeError, KeyError):
-            results.append({
+            results.append({ # TODO - Change to some class
                 "cert_id": cert_id,
-                "status": "skipped: missing_pem_filename",
+                "code": ExitCode.UNKNOWN,
+                "result": "skipped: missing_pem_filename",
                 "expire_date": expire_date_str,
                 "local_path": None,
                 "updated": False,
             })
             continue
+        if not pem_filename.endswith(".pem"): # TODO - Maybe add some additional validation if someone will provide badbad filename?
+            pem_filename.append(f"{pem_filename}.pem")
         
         certificate = cert.get("certificate")
         if not certificate:
-            default_path = certs_dir / (pem_filename if pem_filename.endswith(".pem") else f"{pem_filename}.pem")
             results.append({
                 "cert_id": cert_id,
-                "status": "skipped: missing_certificate",
+                "code": ExitCode.CRITICAL,
+                "result": "skipped: missing_certificate",
                 "expire_date": expire_date_str,
-                "local_path": str(default_path),
+                "local_path": str(certs_dir / pem_filename),
                 "updated": False,
             })
             continue
+        
+        expire_date_str = cert.get("expire_date")
+        if not expire_date_str:
+            results.append({
+                "cert_id": cert_id,
+                "code": ExitCode.CRITICAL,
+                "result": "skipped: missing_expire_date",
+                "expire_date": None,
+                "local_path": str(certs_dir / pem_filename),
+                "updated": False
+            })
+            continue
+        try:
+            expire_date = datetime.strptime(expire_date_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        except ValueError:
+            results.append({
+                "cert_id": cert_id,
+                "code": ExitCode.CRITICAL,
+                "result": "skipped: invalid_expire_date",
+                "expire_date": expire_date_str,
+                "local_path": str(certs_dir / pem_filename),
+                "updated": False,
+            })
+            continue
+        
+        
+        
+        local_pem_file: Path | None = None
+        for f in certs_dir.iterdir():
+            if f.is_file() and f.name == pem_filename:
+                local_pem_file = f
         
         chain = cert.get("chain")
         private_key = cert.get("private_key")
         pem_parts = [part.strip() for part in [certificate, chain, private_key] if part]
         pem_bundle = "\n".join(pem_parts) + "\n"
         
-        candidate_names = [pem_filename]
-        if not pem_filename.endswith(".pem"):
-            candidate_names.append(f"{pem_filename}.pem")
-        
-        matching_paths: list[Path] = []
-        for cert_file_path in certs_dir.iterdir():
-            if not cert_file_path.is_file():
-                continue
-            if any(fnmatch(cert_file_path.name, candidate) for candidate in candidate_names):
-                matching_paths.append(cert_file_path)
-
-        if not matching_paths:
-            if any(ch in pem_filename for ch in {"*", "?", "["}):
-                new_filename = f"{cert_id}.pem"
-            else:
-                new_filename = pem_filename if pem_filename.endswith(".pem") else f"{pem_filename}.pem"
-            new_path = certs_dir / new_filename
-            new_path.write_text(pem_bundle, encoding="utf-8")
-            updated_files.append(str(new_path))
+        if local_pem_file is None: # Add new certificate
+            local_pem_file = certs_dir / str(pem_filename)
+            local_pem_file.write_text(pem_bundle, encoding="UTF-8")
+            updated_certs.append(str(local_pem_file))
             any_updated = True
-            results.append({
+            results.append({ 
                 "cert_id": cert_id,
-                "status": "created",
+                "code": ExitCode.OK,
+                "result": "created",
                 "expire_date": expire_date_str,
-                "local_path": str(new_path),
-                "updated": True,
+                "local_path": str(local_pem_file),
+                "updated": True
             })
             continue
-        
-        for cert_file_path in matching_paths:
-            local_expire_date = get_cert_expire_date(cert_file_path)
+        else:
+            local_expire_date = get_cert_expire_date(local_pem_file)
             if not local_expire_date:
                 results.append({
                     "cert_id": cert_id,
-                    "status": "skipped: local_expire_not_found",
+                    "code": ExitCode.WARNING,
+                    "result": "skipped: local_expire_not_found",
                     "expire_date": expire_date_str,
-                    "local_path": str(cert_file_path),
-                    "updated": False,
-                })
-                continue
-            if api_expire_date <= local_expire_date:
-                results.append({
-                    "cert_id": cert_id,
-                    "status": "up_to_date",
-                    "expire_date": expire_date_str,
-                    "local_path": str(cert_file_path),
-                    "updated": False,
+                    "local_path": str(local_pem_file),
+                    "updated": False
                 })
                 continue
             
-            cert_file_path.write_text(pem_bundle, encoding="utf-8")
-            updated_files.append(str(cert_file_path))
+            if expire_date <= local_expire_date: # Local certificate is newer
+                results.append({
+                    "cert_id": cert_id,
+                    "code": ExitCode.OK,
+                    "result": "up_to_date",
+                    "expire_date": expire_date_str,
+                    "local_path": str(local_pem_file),
+                    "updated": False
+                })
+                continue
+            
+            local_pem_file.write_text(pem_bundle, encoding="utf-8") # Update cert
+            updated_certs.append(str(local_pem_file))
             any_updated = True
             results.append({
                 "cert_id": cert_id,
                 "status": "updated",
+                "code": ExitCode.OK,
                 "expire_date": expire_date_str,
-                "local_path": str(cert_file_path),
-                "updated": True,
+                "local_path": str(local_pem_file),
+                "updated": True
             })
     
-        
     if any_updated and post_hook:
         result = run_cmd(post_hook, shell=True)
         if result.returncode != 0:
-            raise typer.BadParameter(f"Failed to run post-hook '{post_hook}', error: {result.stderr}")
+            data = {
+                "msg": "Failed to run post-hook after successful local certificate update",
+                "error": result.stderr,
+                "return_code": result.returncode,
+                "cmd": post_hook
+            }
+            result = Result(data, ExitCode.CRITICAL)
+            if nagios:
+                nagios.send_passive(f"{ExitCode.CRITICAL.name}: {data['msg']}, error: {data['error']}", ExitCode.CRITICAL)
+            return result.render_and_exit()
     
-    render(results, format, True, columns)
-    if is_send_nagios_passive:
-        msg = f"OK: update-in-place completed, updated={len(updated_files)}"
-        Nagios.send_passive(nagios_server, nagios_host, nagios_check, Nagios.OK, msg)
+    result = Result(results, format)
+    if nagios:
+        exit_code = ExitCode.OK # TODO - Check if results contains any bad status
+        nagios.send_passive(f"{exit_code.name}: TODO", exit_code)
+        
+    return result.render_and_exit(columns)
 
 
 # Helper functions
@@ -642,24 +653,6 @@ def load_settings(ctx: typer.Context) -> Settings:
     return settings
 
 
-def parse_response(response: requests.Response) -> dict | list[dict]:
-    try:
-        payload = response.json()
-    except ValueError:
-        return {"message": response.text}
-
-    if not isinstance(payload, dict):
-        return payload
-
-    payload.pop("timestamp", None)
-    if response.ok:
-        payload.pop("path", None)
-        payload.pop("code", None)
-        payload = payload['data']
-        
-    return payload
-
-
 def read_file(file_path: Path) -> str:
     try:
         return file_path.read_text(encoding="utf-8")
@@ -694,171 +687,199 @@ def get_cert_expire_date(cert_file_path: Path) -> datetime | None:
     return expire_date.astimezone(timezone.utc)
 
 
-def render_table_cell(value) -> str:
-    def format_kv_block(obj: dict, indent: str = "  ") -> str:
-        key_width = max((len(str(k)) for k in obj.keys()), default=0)
-        lines = []
-        for k in sorted(obj.keys(), key=lambda x: str(x)):
-            v = obj[k]
-            if isinstance(v, (dict, list)):
-                v_str = json.dumps(v, ensure_ascii=False)
-            else:
-                v_str = str(v)
-            lines.append(f"{indent}{str(k):<{key_width}} = {v_str}")
-        return "\n".join(lines)
+@dataclass
+class Result:
+    data: dict | list[dict]
+    exit_code: ExitCode
+    format: Format
     
-    if value is None:
-        return "-"
-
-    if isinstance(value, dict):
-        if not value:
-            return "{}"
-        return format_kv_block(value, indent="")
-
-    if isinstance(value, list):
-        if not value:
-            return "-"
-
-        if all(isinstance(x, dict) for x in value):
-            blocks = []
-            for i, item in enumerate(value, start=1):
-                header = f"• #{i}"
-                blocks.append(header)
-                blocks.append(format_kv_block(item, indent="  "))
-            return "\n".join(blocks)
-
-        lines = []
-        for item in value:
-            if isinstance(item, dict):
-                lines.append("•")
-                lines.append(format_kv_block(item, indent="  "))
-            elif isinstance(item, list):
-                lines.append("• " + json.dumps(item, ensure_ascii=False))
-            else:
-                lines.append(f"• {item}")
-        return "\n".join(lines)
-
-    return str(value)
-
-
-def render(data, format: str, success: bool, columns: list[str] | None) -> None:
-    def convert_val_as_str(val: Any) -> str:
-        if isinstance(val, (dict, list)):
-            return json.dumps(val, ensure_ascii=False)
-        return str(val)
-
-    def render_field(key: Any, val: Any, key_width: int) -> str:
-        key_as_str = str(key)
-        val_as_str = convert_val_as_str(val)
-        return f"{key_as_str:<{key_width}} = {val_as_str}"
-
-    def emit(value: Any = "") -> None:
-        if success:
-            console.print(value)
-            return
-        if isinstance(value, str):
-            console.print(value, style="red", markup=False, highlight=False)
-            return
-        console.print(value, style="red", highlight=False)
-                    
-    if success:
-        data = filter_data(data, columns)
-    
-    try:
-        format = Format(format)
-    except ValueError:
-        raise typer.BadParameter(f"Unknown format: {format}, must be one of: {(', ').join(Format.values())}")
-    
-    if format == Format.JSON:
-        emit(json.dumps(data, indent=2, ensure_ascii=False))
-        return
-    elif format == Format.VALUE:
-        if isinstance(data, dict):
-            for val in data.values():
-                emit(convert_val_as_str(val))
-        elif isinstance(data, list):
-            if all(isinstance(item, dict) for item in data):
-                for item in data:
-                    for val in item.values():
-                        emit(convert_val_as_str(val))
-                    if item != data[-1]: # Do not print on last iteration
-                        emit()
-            else:
-                for item in data:
-                    emit(item)
-        return
-    elif format == Format.KEY_VALUE:
-        if isinstance(data, dict):
-            key_width = max((len(str(key)) for key in data.keys()), default=0)
-            for key, val in data.items():
-                emit(render_field(key, val, key_width))
-        elif isinstance(data, list):
-            if all(isinstance(item, dict) for item in data):
-                key_width = max(
-                    (len(str(key)) for item in data for key in item.keys()),
-                    default=0,
-                )
-                for item in data:
-                    for key, val in item.items():
-                        emit(render_field(key, val, key_width))
-                    if item != data[-1]: # Do not print on last iteration
-                        emit()
-            else:
-                for item in data:
-                    emit(item)
+    def __init__(
+        self, 
+        result: requests.Response | dict | list[dict],
+        format: str,
+        exit_code: ExitCode = None
+    ) -> None:
+        if isinstance(result, requests.Response):
+            self.data = self._parse_response(result)
+            self.exit_code = exit_code or (ExitCode.OK if result.ok else ExitCode.CRITICAL)
         else:
-            emit(data)
-        return
-    elif format == Format.TABLE:
-        rows = data if isinstance(data, list) else [data]
-        if not rows:
-            return
+            self.data = result
+            self.exit_code = exit_code or ExitCode.OK
+        try:
+            self.format = Format(format)
+        except ValueError:
+            raise typer.BadParameter(f"Unknown format: {format}, must be one of: {(', ').join(Format.values())}")
 
-        table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
-
-        cols = list(rows[0].keys())
-        for c in cols:
-            table.add_column(str(c), overflow="fold")  # fold helps if mucho text
-
-        for row in rows:
-            table.add_row(*[render_table_cell(row.get(c, "")) for c in cols])
-
-        emit(table)
-        return
-
-
-def filter_data(data: list | dict, columns: list[str] | None) -> Any:
-    if not columns:
-        return data
-
-    available_columns: set[str] = set()
     
-    if isinstance(data, dict):
-        available_columns = set(data.keys())
-    elif isinstance(data, list):
-        for row in data:
-            if isinstance(row, dict):
-                available_columns.update(row.keys())
+    def _parse_response(self, response: requests.Response) -> dict | list[dict]:
+        try:
+            payload = response.json()
+        except ValueError:
+            return {"message": response.text}
 
-    missing_columns = [col for col in columns if col not in available_columns]
-    if missing_columns:
-        possible_columns = ", ".join(sorted(available_columns)) if available_columns else "<none>"
-        missing = ", ".join(missing_columns)
-        raise typer.BadParameter(f"Unknown column(s): {missing}, available choices: {possible_columns}")
+        if not isinstance(payload, dict):
+            return payload
 
-    if isinstance(data, list):
-        filtered_data = []
-        for row in data:
-            if isinstance(row, dict):
-                filtered_data.append({col: row.get(col) for col in columns})
+        payload.pop("timestamp", None)
+        if response.ok:
+            payload.pop("path", None)
+            payload.pop("code", None)
+            payload = payload['data']
+            
+        return payload
+
+    
+    def _filter_data(self, columns: list[str] | None = None) -> Any:
+        if not columns:
+            return self.data
+
+        available_columns: set[str] = set()
+        
+        if isinstance(self.data, dict):
+            available_columns = set(self.data.keys())
+        elif isinstance(self.data, list):
+            for row in self.data:
+                if isinstance(row, dict):
+                    available_columns.update(row.keys())
+
+        missing_columns = [col for col in columns if col not in available_columns]
+        if missing_columns:
+            possible_columns = ", ".join(sorted(available_columns)) if available_columns else "<none>"
+            missing = ", ".join(missing_columns)
+            raise typer.BadParameter(f"Unknown column(s): {missing}, available choices: {possible_columns}")
+
+        if isinstance(self.data, list):
+            filtered_data = []
+            for row in self.data:
+                if isinstance(row, dict):
+                    filtered_data.append({col: row.get(col) for col in columns})
+                else:
+                    filtered_data.append(row)
+            return filtered_data
+
+        if isinstance(self.data, dict):
+            return {col: self.data.get(col) for col in columns}
+
+        return self.data
+
+
+    def render_and_exit(self, columns: list[str] | None = None) -> NoReturn:
+        def _convert_val_as_str(val: Any) -> str:
+            if isinstance(val, (dict, list)):
+                return json.dumps(val, ensure_ascii=False)
+            return str(val)
+
+        def _render_field(key: Any, val: Any, key_width: int) -> str:
+            key_as_str = str(key)
+            val_as_str = _convert_val_as_str(val)
+            return f"{key_as_str:<{key_width}} = {val_as_str}"
+        
+        def _render_table_cell(value) -> str:
+            def format_kv_block(obj: dict, indent: str = "  ") -> str:
+                key_width = max((len(str(k)) for k in obj.keys()), default=0)
+                lines = []
+                for k in sorted(obj.keys(), key=lambda x: str(x)):
+                    v = obj[k]
+                    if isinstance(v, (dict, list)):
+                        v_str = json.dumps(v, ensure_ascii=False)
+                    else:
+                        v_str = str(v)
+                    lines.append(f"{indent}{str(k):<{key_width}} = {v_str}")
+                return "\n".join(lines)
+            
+            if value is None:
+                return "-"
+
+            if isinstance(value, dict):
+                if not value:
+                    return "{}"
+                return format_kv_block(value, indent="")
+
+            if isinstance(value, list):
+                if not value:
+                    return "-"
+
+                if all(isinstance(x, dict) for x in value):
+                    blocks = []
+                    for i, item in enumerate(value, start=1):
+                        header = f"• #{i}"
+                        blocks.append(header)
+                        blocks.append(format_kv_block(item, indent="  "))
+                    return "\n".join(blocks)
+
+                lines = []
+                for item in value:
+                    if isinstance(item, dict):
+                        lines.append("•")
+                        lines.append(format_kv_block(item, indent="  "))
+                    elif isinstance(item, list):
+                        lines.append("• " + json.dumps(item, ensure_ascii=False))
+                    else:
+                        lines.append(f"• {item}")
+                return "\n".join(lines)
+            return str(value)
+
+        def _print(value: Any = "") -> None:
+            if self.exit_code.value == 0:
+                console.print(value)
+                return
+            if isinstance(value, str):
+                console.print(value, style="red", markup=False, highlight=False)
+                return
+            console.print(value, style="red", highlight=False)
+        
+        data = self._filter_data(columns) if self.exit_code.value == 0 else self.data
+        
+        if self.format == Format.JSON:
+            _print(json.dumps(data, indent=2, ensure_ascii=False))
+        elif self.format == Format.VALUE:
+            if isinstance(data, dict):
+                for val in data.values():
+                    _print(_convert_val_as_str(val))
+            elif isinstance(data, list):
+                if all(isinstance(item, dict) for item in data):
+                    for item in data:
+                        for val in item.values():
+                            _print(_convert_val_as_str(val))
+                        if item != data[-1]: # Do not print on last iteration
+                            _print()
+                else:
+                    for item in data:
+                        _print(item)
+        elif self.format == Format.KEY_VALUE:
+            if isinstance(data, dict):
+                key_width = max((len(str(key)) for key in data.keys()), default=0)
+                for key, val in data.items():
+                    _print(_render_field(key, val, key_width))
+                    
+            elif isinstance(data, list):
+                if all(isinstance(item, dict) for item in data):
+                    key_width = max((len(str(key)) for item in data for key in item.keys()), default=0)
+                    
+                    for item in data:
+                        for key, val in item.items():
+                            _print(_render_field(key, val, key_width))
+                        if item != data[-1]: # Do not print on last iteration
+                            _print()
+                else:
+                    for item in data:
+                        _print(item)
             else:
-                filtered_data.append(row)
-        return filtered_data
+                _print(data)
+        elif self.format == Format.TABLE:
+            rows = data if isinstance(data, list) else [data]
+            if rows:
+                table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
 
-    if isinstance(data, dict):
-        return {col: data.get(col) for col in columns}
+                cols = list(rows[0].keys())
+                for c in cols:
+                    table.add_column(str(c), overflow="fold") # fold helps if mucho text
 
-    return data
+                for row in rows:
+                    table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+                _print(table)
+
+        raise typer.Exit(code=self.exit_code.value)
 
 
 def run_cmd(

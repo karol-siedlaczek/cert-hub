@@ -166,7 +166,7 @@ openssl rand -base64 32
 Use the built-in CLI command:
 ```bash
 # Variables can be provided by flags (use --help to show) or by prompt if any required variable is missing
-./certhub token gen-hmac 
+./certhub token gen-hmac --id admin
 ```
 
 CLI will print a ready-to-use value:
