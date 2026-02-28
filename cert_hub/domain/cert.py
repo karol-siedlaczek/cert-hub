@@ -44,7 +44,8 @@ class Cert:
         Require.type("id", id, str)
         Require.email("email", email)
         Require.type("domains", domains, list)
-        Require.type("custom_attrs", custom_attrs, dict)
+        if custom_attrs is not None:
+            Require.type("custom_attrs", custom_attrs, dict)
         
         for i, domain in enumerate(domains):
             Require.domain(f"domains[{i}]", domain)
@@ -199,7 +200,7 @@ class Cert:
         
     def _require_issued(self) -> None:
         if not self.is_issued():
-            raise CertException(self.id, f"Certificate '{self}' is not issued", status=CertStatus.NOT_ISSUED)
+            raise CertException(self.id, f"Certificate is not issued", status=CertStatus.NOT_ISSUED)
 
     
     def _read_text(self, file_path: Path) -> str:

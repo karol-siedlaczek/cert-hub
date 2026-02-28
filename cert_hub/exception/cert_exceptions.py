@@ -44,4 +44,8 @@ class CertException(Exception):
         self.msg = msg
         self.status = status
         super().__init__(msg)
+        
+    
+    def get_full_msg(self) -> str:
+        return f"({self.status.value}) {self.cert_id} - {self.msg}"
     

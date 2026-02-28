@@ -27,7 +27,7 @@ def version() -> Response:
     return build_response(200, data=payload)
     
 
-@api.route("/api/health", methods=["GET"])
+@api.route("/api/certs/health", methods=["GET"])
 def health() -> Response:
     patterns = query_list("match", default=["*"])
     exclude_ok = query_bool("exclude_ok")
@@ -57,7 +57,7 @@ def health() -> Response:
                 "expire_date": cert.get_expire_date_as_str()
             })
         except CertException as e: # Not issued
-            log_request(e.msg, level="info")
+            log_request(e.get_full_msg(), level="info")
             certs_health.append({
                 "id": cert.id,
                 "status": status.value,
@@ -97,7 +97,7 @@ def issue_cert() -> Response:
                 "expire_date": cert.get_expire_date_as_str()             
             })
         except CertException as e: # Already issued
-            log_request(e.msg, level="info")
+            log_request(e.get_full_msg(), level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
@@ -123,13 +123,13 @@ def renew_cert() -> Response:
                 "msg": f"Successfully renewed '{cert}' certificate",
                 "expire_date": cert.get_expire_date_as_str()
             })
-        except CertException as e: # Not expiring
-            log_request(e.msg, level="info")
+        except CertException as e: # Not expiring / Not issued
+            log_request(e.get_full_msg(), level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
                 "msg": e.msg,
-                "expire_date": cert.get_expire_date_as_str()
+                "expire_date": cert.get_expire_date_as_str() if cert.is_issued() else None
             })
     
     return build_response(200, data=payload)
@@ -155,7 +155,7 @@ def get_cert() -> Response:
                 "private_key": cert.get_private_key(),
             })
         except CertException as e: # Not issued
-            log_request(e.msg, level="info")
+            log_request(e.get_full_msg(), level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
