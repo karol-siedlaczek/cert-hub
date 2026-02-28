@@ -185,7 +185,7 @@ Endpoints:
 |:-------|:---------|:--------------|:-------------|
 | `GET` | `/ping` | :x: | - |
 | `GET` | `/api/version` | :x: | - |
-| `GET` | `/api/health` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) |
+| `GET` | `/api/certs/health` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) |
 | `POST` | `/api/certs/issue` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) |
 | `POST` | `/api/certs/renew` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) |
 | `GET` | `/api/certs` | :heavy_check_mark: | `match` (0..n) |
@@ -197,7 +197,7 @@ Query params:
   - repeatable param (for example `?match=cert-a&match=cert-b`)
   - accepted values: `*`, exact cert ID, or regex pattern (full match against cert ID)
   - default: `*` (all allowed certificates)
-- `exclude_ok` (`/api/health`): bool, default `false`
+- `exclude_ok` (`/api/certs/health`): bool, default `false`
 - `force` (`/api/certs/issue`, `/api/certs/renew`): bool, default `false`
 - accepted bool values:
   - true: `1`, `true`, `True`, `yes`, `Yes`, or empty value (for example `?force=`)
@@ -207,7 +207,7 @@ Examples:
 ```bash
 curl -s \
   -H "Authorization: Bearer admin.my-raw-token" \
-  "http://127.0.0.1:8080/api/health?match=*&exclude_ok=true"
+  "http://127.0.0.1:8080/api/certs/health?match=*&exclude_ok=true"
 
 curl -s \
   -X POST \
