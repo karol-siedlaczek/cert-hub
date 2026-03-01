@@ -924,7 +924,7 @@ def update_in_place(
         highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
         msg_parts = []
         for r in results:
-            msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}")
+            msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
             
         nagios.send_passive_check_result((NAGIOS_ESCAPE_CHAR).join(msg_parts), highest_exit_code)
 
