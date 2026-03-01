@@ -240,7 +240,7 @@ class CmdResult:
 
     def render_and_exit(
         self,
-        context_info: str,
+        context_info: str | None = None,
         columns: tuple[str] | None = None,
         *,
         sensitive_columns: tuple[str] | None = None
@@ -368,7 +368,7 @@ class CmdResult:
             
         LOGGER.log(
             logging.INFO if self.exit_code == ExitCode.OK else logging.ERROR,
-            f"Result for {context_info} command: {data_to_log}"
+            f"{f"Result for {context_info} command: " if context_info else ""}{data_to_log}"
         )
         raise typer.Exit(code=self.exit_code.value)
 
@@ -606,7 +606,7 @@ def gen_hmac(
     print(f"TOKEN_{token_id.upper()}_HMAC={hmac_key.hexdigest()}\n")
 
 
-@cert_app.command(help="Statuses for all certificates")
+@cert_app.command(help="Show statuses (expiring, not issued etc.) for the current identity or selected pattern")
 def health(
     ctx: typer.Context,
     timeout: int = Opt.timeout(),
@@ -751,7 +751,7 @@ def update_in_place(
     if not response.ok:
         if nagios:
             nagios.send_passive_check_result(f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}", ExitCode.CRITICAL)
-        result.render_and_exit()
+        result.render_and_exit(ctx.info_name)
     
     results: list[CertUpdateResult] = []
 
@@ -916,7 +916,7 @@ def update_in_place(
             result = CmdResult.from_dict(data, ExitCode.CRITICAL)
             if nagios:
                 nagios.send_passive_check_result(f"{ExitCode.CRITICAL.name}: {data['msg']}, updated certs: {data['updated_certs']}, error: {data['error']}", ExitCode.CRITICAL)
-            return result.render_and_exit()
+            return result.render_and_exit(ctx.info_name)
     
     result = CmdResult.from_dict([r.to_serializable() for r in results], ExitCode.OK)
     
