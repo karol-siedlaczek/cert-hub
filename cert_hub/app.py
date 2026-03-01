@@ -83,30 +83,30 @@ def setup_logging(config: Config) -> None:
 def setup_error_handlers(app: Flask) -> None:
     @app.errorhandler(404)
     def handle_not_found(e: NotFound) -> Response:
-        log_request(e, "warning")
+        log_request(e, level="warning")
         return build_response(404, msg="Resource not found")
     
     @app.errorhandler(405)
     def handle_method_not_allowed(e: MethodNotAllowed) -> Response:
-        log_request(e, "warning")
+        log_request(e, level="warning")
         return build_response(405, msg=f"Method not allowed, valid methods are: {', '.join(e.valid_methods)}")
 
     @app.errorhandler(AuthException)
     def handle_auth_exception(e: AuthException) -> Response:
-        log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", "warning")
+        log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", level="warning")
         return build_response(e.code, msg=e.msg, detail=None if isinstance(e, AuthFailedException) else e.detail)
     
     @app.errorhandler(ApiError)
     def handle_api_error(e: ApiError) -> Response:
-        log_request(f"{type(e).__name__}: {e.msg}{f", details: {e.detail}" if e.detail else ""}", e.level)
+        log_request(f"{type(e).__name__}: {e.msg}{f", details: {e.detail}" if e.detail else ""}", level=e.level)
         return build_response(e.code, msg=e.msg, detail=e.detail)
     
     # @app.errorhandler(Exception)
     # def handle_any_exception(e) -> Response:
-    #     log_request(f"Unhandled exception: {e}", "error")
+    #     log_request(f"Unhandled exception: {e}", level="error")
     #     return build_response(500, msg="Internal server error")
     
     @app.errorhandler(500)
     def handle_internal_server_error(e) -> Response:
-        log_request(f"Unhandled exception: {e}", "error")
+        log_request(f"Unhandled exception: {e}", level="error")
         return build_response(500, msg="Internal server error")

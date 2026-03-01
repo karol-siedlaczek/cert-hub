@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class Cert:
-    DATE_FORMAT: ClassVar[str] = '%Y-%m-%d %H:%M'
+    DATE_FMT: ClassVar[str] = '%Y-%m-%d %H:%M'
     
     id: str
     email: str
@@ -138,10 +138,19 @@ class Cert:
         private_key_path = certbot.get_private_key_path(self.id)
         
         return self._read_text(private_key_path)
+    
+    
+    def get_next_renew_date_as_str(self) -> str:
+        return datetime.strftime(self.get_next_renew_date(), self.DATE_FMT)
+        
+    
+    def get_next_renew_date(self) -> datetime:
+        certbot = CertBot.get_from_global_context()
+        return self.get_expire_date() - timedelta(days=certbot.renew_before_days)
 
 
     def get_expire_date_as_str(self) -> str:
-        return datetime.strftime(self.get_expire_date(), self.DATE_FORMAT)
+        return datetime.strftime(self.get_expire_date(), self.DATE_FMT)
     
 
     def get_expire_date(self) -> datetime:
@@ -200,7 +209,7 @@ class Cert:
         
     def _require_issued(self) -> None:
         if not self.is_issued():
-            raise CertException(self.id, f"Certificate is not issued", status=CertStatus.NOT_ISSUED)
+            raise CertException(self.id, f"Certificate not issued", status=CertStatus.NOT_ISSUED)
 
     
     def _read_text(self, file_path: Path) -> str:

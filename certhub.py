@@ -14,6 +14,8 @@ import sys
 import click
 import binascii
 import subprocess
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from enum import Enum
 from getpass import getpass
@@ -25,16 +27,15 @@ from typing import Any, Optional, Dict, Sequence, NoReturn, ClassVar
 import requests
 from cryptography import x509
 
-# TODO
-# Add logging
-
 ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 ENV_VAR_LOG_FILE = "CERTHUB_LOG_FILE"
+ENV_VAR_LOG_LEVEL = "CERTHUB_LOG_LEVEL"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
 DATE_FMT = "%Y-%m-%d %H:%M"
 NAGIOS_ESCAPE_CHAR = "</br>"
 PEM_FILENAME_PATTERN = r"^[\w.-]+$"
+LOGGER = logging.getLogger("certhub-cli")
 
 app = typer.Typer(
     add_completion=True, 
@@ -125,7 +126,7 @@ class CertUpdateResult:
     
     def to_serializable(self) -> dict:
         return {
-            "cert": self.cert,
+            "id": self.cert,
             "status": self.code.name,
             "pem_file": str(self.pem_file),
             "local_expire_date": datetime.strftime(self.local_expire_date, DATE_FMT) if self.local_expire_date else None,
@@ -140,6 +141,7 @@ class Settings:
     api_url: str | None
     token: str | None
     log_file: str | None
+    log_level: str | None
     format: Format | None
 
 
@@ -185,7 +187,7 @@ class CmdResult:
             
         return payload
     
-    def _filter_data(self, columns: list[str] | None = None) -> Any:
+    def _filter_data(self, columns: tuple[str] | None = None) -> Any:
         if not columns:
             return self.data
 
@@ -217,8 +219,32 @@ class CmdResult:
             return {col: self.data.get(col) for col in columns}
 
         return self.data
+    
+    def _mask_sensitive(self, obj: Any, sensitive: set[str]) -> Any:
+        if not sensitive:
+            return obj
 
-    def render_and_exit(self, columns: list[str] | None = None) -> NoReturn:
+        if isinstance(obj, dict):
+            out: dict[Any, Any] = {}
+            for k, v in obj.items():
+                if isinstance(k, str) and k in sensitive:
+                    out[k] = "****"
+                else:
+                    out[k] = self._mask_sensitive(v, sensitive)
+            return out
+
+        if isinstance(obj, list):
+            return [self._mask_sensitive(x, sensitive) for x in obj]
+
+        return obj
+
+    def render_and_exit(
+        self,
+        context_info: str,
+        columns: tuple[str] | None = None,
+        *,
+        sensitive_columns: tuple[str] | None = None
+    ) -> NoReturn:
         def _convert_val_as_str(val: Any) -> str:
             if isinstance(val, (dict, list)):
                 return json.dumps(val, ensure_ascii=False)
@@ -335,9 +361,15 @@ class CmdResult:
                 for row in rows:
                     table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
                 _print(table)
-                
-        # TODO - Add logging if LOG_FILE defined
-
+        
+        data_to_log = data
+        if not LOGGER.disabled and sensitive_columns:
+            data_to_log = self._mask_sensitive(data, sensitive_columns)
+            
+        LOGGER.log(
+            logging.INFO if self.exit_code == ExitCode.OK else logging.ERROR,
+            f"Result for {context_info} command: {data_to_log}"
+        )
         raise typer.Exit(code=self.exit_code.value)
 
 
@@ -446,7 +478,7 @@ class Client():
 def main(
     ctx: typer.Context,
     api_url: str = typer.Option(
-        "http://localhost:8080", "-u", "--base-url",
+        None, "-u", "--api-url",
         envvar=ENV_VAR_API_URL,
         help=f"API base URL. You can set environment or set API_URL=<value> in {SETTINGS_FILE}"
     ),
@@ -456,12 +488,17 @@ def main(
         help=f"Bearer token. You can set environment or set TOKEN=<value> in {SETTINGS_FILE}"
     ),
     log_file: str = typer.Option(
-        "/var/log/certhub-cli.log", "-l", "--log-file",
+        None, "--log-file",
         envvar=ENV_VAR_LOG_FILE,
         help=f"Log file. You can set environment or set LOG_FILE=<value> in {SETTINGS_FILE}"
+    ),
+    log_level: str = typer.Option(
+        None, "--log-level",
+        envvar=ENV_VAR_LOG_LEVEL,
+        help=f"Log level. You can set environment or set LOG_LEVEL=<value> in {SETTINGS_FILE}"
     )
 ) -> None:
-    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, format=None)
+    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None)
     
     
 @app.command(help="Versions and author")
@@ -476,7 +513,7 @@ def version(
     response = client.request("GET", "/api/version")
     
     result = CmdResult.from_response(response)
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
 
 
 @token_app.command(help="Permitted certificates for current identity")
@@ -491,7 +528,7 @@ def scope(
     response = client.request("GET", "/api/token/scope")
     
     result = CmdResult.from_response(response)
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
     
     
 @token_app.command(help="Current identity information (e.g. allowed CIDRs, permissions)")
@@ -505,11 +542,11 @@ def identity(
     client = Client.init(settings.api_url, settings.token, timeout=timeout)
     response = client.request("GET", "/api/token/identity")
     
-    result = CmdResult.from_dict(response)
+    result = CmdResult.from_response(response)
     if result.data.get("permissions"):
         result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
     
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
 
 
 @token_app.command(help="Generate TOKEN_<ID>_HMAC value for server configuration") 
@@ -593,7 +630,7 @@ def health(
     if result.data.get("certs"):
         result.data = result.data["certs"] 
     
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
     
 
 @cert_app.command(help="Issue new certificates for the current identity or selected pattern")
@@ -614,7 +651,7 @@ def issue(
     response = client.request("POST", "/api/certs/issue", params=params)
     
     result = CmdResult.from_response(response)
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
 
 
 @cert_app.command(help="Renew existing certificates for the current identity or selected pattern")
@@ -635,7 +672,7 @@ def renew(
     response = client.request("POST", "/api/certs/renew", params=params)
     
     result = CmdResult.from_response(response)
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
     
 
 @cert_app.command(help="List certificates available for the current identity or selected pattern")
@@ -644,7 +681,11 @@ def get(
     timeout: int = Opt.timeout(360),
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
-    columns: list[str] = Opt.columns()
+    columns: list[str] = Opt.columns(),
+    long: bool = typer.Option(
+        None, "-l", "--long",
+        help="Add to output sensitive data like certificate, chain and private key"
+    )
 ) -> None:
     settings = load_settings(ctx, format)
     client = Client.init(settings.api_url, settings.token, timeout=timeout)
@@ -652,9 +693,14 @@ def get(
         **({"match": patterns} if patterns else {})
     }
     response = client.request("GET", "/api/certs", params=params)
+    sensitive_columns=("certificate", "chain", "private_key")
     
     result = CmdResult.from_response(response)
-    return result.render_and_exit(columns)
+    if not long:
+        for d in result.data:
+            for col in sensitive_columns:
+                d.pop(col, None)
+    return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
 
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
@@ -674,16 +720,15 @@ def update_in_place(
     ),
     nagios_server: str = typer.Option(
         None, "--nagios-server",
-        help="TODO"  
+        help="Nagios/nsca server address (host or host:port). If set the command will send a passive check result via NSCA using 'send_nsca' (requires 'send_nsca' installed and configured)"  
     ),
     nagios_hostname: str = typer.Option(
         None, "--nagios-hostname",
-        help="TODO"
+        help="Nagios hostname to report (the 'host_name' used in Nagios objects definition)"
     ),
     nagios_service: str = typer.Option(
         None, '--nagios-service',
-        help="TODO",
-        envvar=""
+        help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
     )
 ) -> None: 
     settings = load_settings(ctx, format)
@@ -883,7 +928,7 @@ def update_in_place(
             
         nagios.send_passive_check_result((NAGIOS_ESCAPE_CHAR).join(msg_parts), highest_exit_code)
 
-    return result.render_and_exit(columns)
+    return result.render_and_exit(ctx.info_name, columns)
     
 # Helper functions
 
@@ -911,14 +956,16 @@ def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
             key, value = line.split("=", 1)
             file_settings[key.strip().upper()] = value.strip()
 
-    # TODO - Check if overwriting works
     if not settings.api_url:
         settings.api_url = file_settings.get("API_URL")
     if not settings.token:
         settings.token = file_settings.get("TOKEN")
     if not settings.log_file:
         settings.log_file = file_settings.get("LOG_FILE")
+    if not settings.log_level:
+        settings.log_level = file_settings.get("LOG_LEVEL")
 
+    setup_logging(settings.log_file, settings.log_level)
     settings.format = Format.from_string(format)
     
     if not settings.api_url:
@@ -934,6 +981,41 @@ def get_ctx_settings() -> Settings:
     if not isinstance(s, Settings):
         raise typer.Exit(code=2)
     return s
+
+
+def setup_logging(log_file: str | None, log_level: str | None) -> None:
+    if not log_file:
+        LOGGER.disabled = True
+        return
+
+    logger = logging.getLogger()
+    if any(getattr(h, "_certhub_handler", False) for h in logger.handlers):
+        return
+
+    level_name = (log_level or "INFO").upper()
+    level = getattr(logging, level_name, None)
+    if not isinstance(level, int):
+        raise typer.BadParameter(
+            f"Unknown log level: {log_level}, must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL"
+        )
+
+    handler = RotatingFileHandler(
+        filename=log_file,
+        maxBytes=2 * 1024 * 1024,
+        backupCount=5,
+        encoding="UTF-8"
+    )
+    handler._certhub_handler = True
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s [pid=%(process)d] [%(name)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    print(level_name)
+
+    logger.addHandler(handler)
+    logger.setLevel(level)
 
 
 def read_file(file_path: Path) -> str:
@@ -976,7 +1058,7 @@ def safe_str(x: object) -> str:
 def run_cmd(
     args: Sequence[str] | str,
     *,
-    shell: bool = True,
+    shell: bool = False,
     timeout: Optional[int] = 15
 ) -> subprocess.CompletedProcess[str]:
     cmd: str | list[str]
@@ -1001,6 +1083,7 @@ def run_cmd(
         executable="/bin/bash",
         timeout=timeout
     )
+    LOGGER.debug(f"Command executed shell={shell} return_code={result.returncode} cmd={cmd} stderr={safe_str(result.stderr.strip()) if result.stderr else ""}",)
     return result
 
 
