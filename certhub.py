@@ -693,7 +693,7 @@ def get(
         **({"match": patterns} if patterns else {})
     }
     response = client.request("GET", "/api/certs", params=params)
-    sensitive_columns=("certificate", "chain", "private_key")
+    sensitive_columns = ("certificate", "chain", "private_key")
     
     result = CmdResult.from_response(response)
     if not long:
