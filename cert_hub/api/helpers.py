@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime, timezone
-from typing import Any, NoReturn
+from typing import Any
 from http import HTTPStatus
-from flask import Response, abort, jsonify, request
+from flask import Response, jsonify, request
+from cert_hub.domain.cert import Cert, CertStatus
 from cert_hub.domain.identity import Identity
 from cert_hub.conf.config import Config
 from cert_hub.exception.auth_exceptions import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
@@ -19,13 +20,17 @@ def get_remote_ip() -> str | None:
     return xff.split(",")[0].strip() if xff else None
 
 
-def log_request(msg: str, level: str = "info") -> None:
+def log_request(msg: str, *, identity: Identity | None = None, level: str = "info") -> None:
     level = level.lower()
     log_fn = getattr(log, level, None)
     
     if not callable(log_fn):
         raise ValueError(f"Invalid log level: {level}")
-    log_fn(f"{request.remote_addr} {request.method} {request.path} {msg}")
+    log_fn(f"{request.remote_addr} {request.method} {request.path} {f"({identity.id}) " if identity else ""}{msg}")
+
+
+def get_log_record(status: CertStatus, cert: Cert | str, msg: str) -> str:
+    return f"cert_id='{cert.id if isinstance(cert, Cert) else cert}', status='{status.value}', msg='{msg}'"
 
 
 def build_response(

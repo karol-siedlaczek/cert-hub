@@ -235,6 +235,8 @@ Optionally, you can store settings in `~/.certhub`:
 ```ini
 API_URL=http://127.0.0.1:8080
 TOKEN=admin.my-raw-token
+LOG_FILE=/var/log/certhub-cli.log # (Optional) Enables logging, also can be defined by env CERTHUB_LOG_FILE
+LOG_LEVEL=INFO # (Optional) Can be also defined by env CERTHUB_LOG_LEVEL
 ```
 The file must have `600` permissions (`chmod 600 ~/.certhub`).
 

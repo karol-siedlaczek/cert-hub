@@ -2,7 +2,7 @@ import platform
 from flask import Blueprint, Response
 from cert_hub.api.context import Context
 from cert_hub.api.validators import query_list, query_bool
-from cert_hub.api.helpers import build_response, log_request, require_auth, get_remote_ip
+from cert_hub.api.helpers import build_response, log_request, require_auth, get_remote_ip, get_log_record
 from cert_hub.conf.config import Config
 from cert_hub.domain.permission import PermissionAction
 from cert_hub.domain.cert_status import CertStatus
@@ -45,25 +45,26 @@ def health() -> Response:
             is_critical = True
         elif status != CertStatus.OK:
             is_warning = True
-            
-        if exclude_ok and status == CertStatus.OK:
-            continue
+        
+        msg = f"Certificate {"issued and does not require renewal" if status == CertStatus.OK else status.value.lower().replace("_", " ")}"
         
         try:
-            certs_health.append({ 
-                "id": cert.id, 
-                "status": status.value,
-                "msg": f"Certificate '{cert}' is issued",
-                "expire_date": cert.get_expire_date_as_str()
-            })
+            if not (exclude_ok and status == CertStatus.OK):
+                certs_health.append({ 
+                    "id": cert.id, 
+                    "status": status.value,
+                    "msg": msg,
+                    "expire_date": cert.get_expire_date_as_str()
+                })
+            log_request(get_log_record(status, cert, msg), identity=context.identity, level="info")
         except CertException as e: # Not issued
-            log_request(e.get_full_msg(), level="info")
             certs_health.append({
                 "id": cert.id,
                 "status": status.value,
                 "msg": e.msg,
                 "expire_date": None
             })
+            log_request(get_log_record(e.status, e.cert_id, e.msg), identity=context.identity, level="info")
     
     if is_critical:
         overall_health = "CRITICAL"
@@ -90,20 +91,25 @@ def issue_cert() -> Response:
     for cert in context.certs:
         try:
             cert.issue(force)
+            status = CertStatus.ISSUED
+            msg = "Certificate successfully issued"
+            
             payload.append({
                 "id": cert.id,
-                "status": CertStatus.ISSUED.value,
-                "msg": f"Successfully issued '{cert}' certificate",
+                "status": status.value,
+                "msg": msg,
                 "expire_date": cert.get_expire_date_as_str()             
             })
+            log_request(get_log_record(status, cert, msg), identity=context.identity, level="info")
         except CertException as e: # Already issued
-            log_request(e.get_full_msg(), level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
                 "msg": e.msg,
                 "expire_date": cert.get_expire_date_as_str()
             })
+            log_request(get_log_record(e.status, e.cert_id, e.msg), identity=context.identity, level="info")
+            
     return build_response(200, data=payload)
 
 
@@ -117,20 +123,27 @@ def renew_cert() -> Response:
     for cert in context.certs:
         try:
             cert.renew(force)
+            status = CertStatus.RENEWED
+            msg = f"Certificate successfully renewed"
+            
             payload.append({
                 "id": cert.id,
-                "status": CertStatus.RENEWED.value,
-                "msg": f"Successfully renewed '{cert}' certificate",
+                "status": status.value,
+                "msg": msg,
+                "next_renew_date": cert.get_next_renew_date_as_str(),
                 "expire_date": cert.get_expire_date_as_str()
             })
+            log_request(get_log_record(status, cert, msg), identity=context.identity, level="info")
         except CertException as e: # Not expiring / Not issued
-            log_request(e.get_full_msg(), level="info")
+            is_issued = cert.is_issued()
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
                 "msg": e.msg,
-                "expire_date": cert.get_expire_date_as_str() if cert.is_issued() else None
+                "next_renew_date": cert.get_next_renew_date_as_str() if is_issued else None,
+                "expire_date": cert.get_expire_date_as_str() if is_issued else None
             })
+            log_request(get_log_record(e.status, e.cert_id, e.msg), identity=context.identity, level="info")
     
     return build_response(200, data=payload)
 
@@ -143,19 +156,22 @@ def get_cert() -> Response:
     
     for cert in context.certs:
         try:
+            status = cert.get_status()
+            msg = f"Certificate successfully fetched"
+            
             payload.append({
                 "id": cert.id,
-                "status": cert.get_status().value,
-                "msg": f"Successfully fetched '{cert}' certificate",
+                "status": status.value,
+                "msg": msg,
                 "custom_attrs": cert.custom_attrs,
                 "domains": cert.domains,
                 "expire_date": cert.get_expire_date_as_str(),
                 "chain": cert.get_chain(),
                 "certificate": cert.get_certificate(),
-                "private_key": cert.get_private_key(),
+                "private_key": cert.get_private_key()
             })
+            log_request(get_log_record(status, cert, msg), identity=context.identity, level="info")
         except CertException as e: # Not issued
-            log_request(e.get_full_msg(), level="info")
             payload.append({
                 "id": cert.id,
                 "status": e.status.value,
@@ -165,8 +181,9 @@ def get_cert() -> Response:
                 "expire_date": None,
                 "chain": None,
                 "certificate": None,
-                "private_key": None,
+                "private_key": None
             })
+            log_request(get_log_record(e.status, e.cert_id, e.msg), identity=context.identity, level="info")
     
     return build_response(200, data=payload)
 
