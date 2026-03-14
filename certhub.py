@@ -1012,7 +1012,6 @@ def setup_logging(log_file: str | None, log_level: str | None) -> None:
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
-    print(level_name)
 
     logger.addHandler(handler)
     logger.setLevel(level)
