@@ -2,3 +2,12 @@ Dockerfile
 README.MD
 .gitignore
 LICENSE
+
+.vscode
+logs
+logs/*
+letsencrypt
+letsencrypt/*
+.envrc
+config.yaml
+test
