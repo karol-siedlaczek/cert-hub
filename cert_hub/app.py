@@ -21,7 +21,8 @@ def create_app() -> Flask:
         config.certbot_acme_server,
         config.certbot_dir,
         config.certbot_bin,
-        config.certbot_renew_before_days
+        config.certbot_renew_before_days,
+        config.certbot_test_cert
     )
     app.extensions["config"] = config
     app.extensions["certbot"] = certbot
