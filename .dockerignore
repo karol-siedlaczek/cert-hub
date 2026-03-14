@@ -11,3 +11,4 @@ letsencrypt/*
 .envrc
 config.yaml
 test
+.github/*
