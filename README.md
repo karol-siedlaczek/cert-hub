@@ -51,7 +51,6 @@ docker run -d \
   -e CONF_FILE="/config/config.yaml" \
   -e LOGS_DIR="/logs" \
   -e CERTBOT_DIR="/letsencrypt" \
-  -e CERTBOT_BIN="/usr/local/bin/certbot" \
   -v "$(pwd)/config.yaml:/config/config.yaml:ro" \
   -v "$(pwd)/logs:/logs" \
   -v "$(pwd)/letsencrypt:/letsencrypt" \
