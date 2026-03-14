@@ -253,3 +253,10 @@ gunicorn wsgi:app --check-config
 ## Notes
 - Application logs are written to `${LOGS_DIR}/app.log`.
 - `CERTBOT_DIR` stores certbot data (`config`, `work`, `logs`, `lock`), changing this directory cause loss of current certificates.
+
+## Push example
+```bash
+git push origin main
+git tag v1.0.1
+git push origin v1.0.1
+```
