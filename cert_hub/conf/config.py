@@ -43,7 +43,7 @@ class Config:
             val = os.getenv(f.name.upper())
             if val is None:
                 val = f.default
-            if f.type is Path:
+            if f.type is Path and val is not None:
                 val = Path(val)
             elif f.type is bool and isinstance(val, str):
                 val = val.strip().lower() in ("true", "1", "yes")
