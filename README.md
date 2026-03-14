@@ -98,11 +98,12 @@ docker compose down
 | `LOGS_DIR` | `string` | :x: | `/logs` | Application logs directory (`app.log`) |
 | `CONF_FILE` | `string` | :x: | `/config/config.yaml` | Path to YAML config with certificates and identities |
 | `CERTBOT_ACME_SERVER` | `string` | :x: | `https://acme-v02.api.letsencrypt.org/directory` | Certbot ACME endpoint |
-| `CERTBOT_BIN` | `string` | :x: | `/usr/bin/certbot` | Path to `certbot` executable binary |
+| `CERTBOT_BIN` | `string` | :x: | - | Path to `certbot` executable binary, if not provided path will be autodetected |
 | `CERTBOT_DIR` | `string` | :x: | `/letsencrypt` | Certbot working directory |
 | `AWS_ACCESS_KEY_ID` | `string` | :x: | - | Access key ID to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration |
 | `AWS_SECRET_ACCESS_KEY` | `string` | :x: | - | Secret access key to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration |
 | `CERTBOT_RENEW_BEFORE_DAYS` | `number` | :x: | `30` | Days before expiration when a cert becomes renewable (1-60) |
+| `CERTBOT_TEST_CERT` | `bool` | :x: | `false` | If `true`, passes `--test-cert` to certbot (uses Let's Encrypt staging environment) |
 | `HMAC_KEY_B64` | `string` | :heavy_check_mark: | - | Base64 HMAC key (minimum 32 bytes after decoding), used to verify tokens. Changing this value requires regenerate all identity passwords! |
 | `TOKEN_<ID>_HMAC` | `string` | :x: | - | Token HMAC-SHA256 (hex) for identity `<ID>` from `config.yaml`. Theoretically not required to start the application, but it is nice to have at least one identity  |
 

@@ -1,4 +1,5 @@
 import os
+import shutil
 import yaml
 import base64
 from flask import current_app as app, g
@@ -19,9 +20,10 @@ class Config:
     logs_dir: Path = "/logs"
     conf_file: Path = "/config/config.yaml"
     certbot_acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
-    certbot_bin: Path = "/usr/bin/certbot"
+    certbot_bin: Path = None
     certbot_dir: Path = "/letsencrypt"
     certbot_renew_before_days: int = 30
+    certbot_test_cert: bool = False
     hmac_key: bytes = None 
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
@@ -43,7 +45,14 @@ class Config:
                 val = f.default
             if f.type is Path:
                 val = Path(val)
+            elif f.type is bool and isinstance(val, str):
+                val = val.strip().lower() in ("true", "1", "yes")
             params[f.name] = val
+
+        if os.getenv("CERTBOT_BIN") is None:
+            detected = shutil.which("certbot")
+            if detected:
+                params["certbot_bin"] = Path(detected)
 
         Require.envs(cls.REQUIRED_ENVS)
         Require.file_exists("CERTBOT_BIN", params["certbot_bin"])

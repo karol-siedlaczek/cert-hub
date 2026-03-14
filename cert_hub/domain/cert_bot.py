@@ -26,12 +26,26 @@ class CertBot:
         acme_server: str,
         base_dir: Path,
         exe_path: Path,
-        renew_before_days: int
+        renew_before_days: int,
+        test_cert: bool = False
     ) -> "CertBot":
         work_dir = base_dir / "work"
         logs_dir = base_dir / "logs"
         conf_dir = base_dir / "config"
-        
+
+        base_args = [
+            "--non-interactive",
+            "--server", acme_server,
+            "--config-dir", str(conf_dir),
+            "--work-dir", str(work_dir),
+            "--logs-dir", str(logs_dir),
+            "--max-log-backups", "100",
+            "--issuance-timeout", "90",
+            "--force-renewal"
+        ]
+        if test_cert:
+            base_args.append("--test-cert")
+
         return cls(
             acme_server = acme_server,
             work_dir = work_dir,
@@ -39,18 +53,7 @@ class CertBot:
             conf_dir = conf_dir,
             exe_path = exe_path,
             renew_before_days = renew_before_days,
-            base_args = [
-                "--non-interactive",
-                "--server", acme_server,
-                "--config-dir", str(conf_dir),
-                "--work-dir", str(work_dir),
-                "--logs-dir", str(logs_dir),
-                "--max-log-backups", "100",
-                "--issuance-timeout", "90",
-                "--test-cert",
-                #"--quiet",
-                "--force-renewal"
-            ]
+            base_args = base_args
         )
     
 
