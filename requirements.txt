@@ -5,3 +5,7 @@ certbot-dns-route53==5.2.2
 acme==5.2.2
 cffi==2.0.0
 typer==0.23.1
+PyYAML>=6.0
+cryptography>=42.0
+rich>=13.0
+requests>=2.31
