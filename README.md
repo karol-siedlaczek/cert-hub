@@ -254,9 +254,28 @@ gunicorn wsgi:app --check-config
 - Application logs are written to `${LOGS_DIR}/app.log`.
 - `CERTBOT_DIR` stores certbot data (`config`, `work`, `logs`, `lock`), changing this directory cause loss of current certificates.
 
-## Push example
+## Publishing Docker image
+
+The CI/CD pipeline builds and pushes the Docker image only when a git tag matching `v*` is pushed.
+
+Push without tag (no image build):
 ```bash
+git add .
+git commit -m "your message"
+git push origin main
+```
+
+Push with tag (triggers image build and push):
+```bash
+git add .
+git commit -m "your message"
 git push origin main
 git tag v1.0.1
 git push origin v1.0.1
 ```
+
+The following image tags will be published:
+- `cert-hub:1.0.1`
+- `cert-hub:1.0`
+- `cert-hub:latest`
+- `cert-hub:<short-sha>`
