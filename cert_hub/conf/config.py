@@ -22,7 +22,7 @@ class Config:
     certbot_acme_server: str = "https://acme-v02.api.letsencrypt.org/directory"
     certbot_bin: Path = None
     certbot_dir: Path = "/letsencrypt"
-    certbot_renew_before_days: int = 30
+    certbot_renew_before_days: int = None
     certbot_test_cert: bool = False
     hmac_key: bytes = None 
     aws_access_key_id: str = None
@@ -59,6 +59,7 @@ class Config:
         Require.one_of("LOG_LEVEL", params["log_level"], cls.ALLOWED_LOG_LEVELS)
         Require.base64("HMAC_KEY_B64", os.getenv("HMAC_KEY_B64"), 32)
         
+        params['certbot_renew_before_days'] = int(os.environ.get('CERTBOT_RENEW_BEFORE_DAYS', '30'))
         Require.type("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], int)
         Require.min("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], 1)
         Require.max("CERTBOT_RENEW_BEFORE_DAYS", params['certbot_renew_before_days'], 60)
