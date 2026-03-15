@@ -702,7 +702,8 @@ def get(
                 d.pop(col, None)
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
-
+    
+# TODO - Allow to set permissions and owner:group on pem files
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
 def update_in_place(
     ctx: typer.Context,
