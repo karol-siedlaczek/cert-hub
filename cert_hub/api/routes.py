@@ -1,3 +1,4 @@
+import os
 import platform
 from flask import Blueprint, Response
 from cert_hub.api.context import Context
@@ -21,7 +22,7 @@ def version() -> Response:
     payload = {
         "name": "Cert Hub",
         "author": "karol@siedlaczek.com.pl",
-        "app": "1.0.0",
+        "app": os.environ.get("APP_VERSION", "unknown"),
         "python": platform.python_version()
     }
     return build_response(200, data=payload)
