@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 env:
-  REGISTRY: 192.168.0.100:9080
+  REGISTRY: registry.siedlaczek.com.pl
 
 jobs:
   build-and-push:
@@ -27,7 +27,7 @@ jobs:
         with:
           buildkitd-config-inline: |
             [registry."${{ env.REGISTRY }}"]
-              http = true
+              http = false
               insecure = true
 
       - name: Log in to registry
