@@ -44,8 +44,8 @@ app = typer.Typer(
     add_completion=True, 
     help="CLI for managing certificates in Cert Hub"
 )
-cert_app = typer.Typer(help=f"Certificate commands, use '{sys.argv[0]} cert --help' for details")
-token_app = typer.Typer(help=f"Token commands, add '{sys.argv[0]} token --help' for details")
+cert_app = typer.Typer(help="Manage certificates: list, issue, renew, check health, and update local certificate files in place")
+token_app = typer.Typer(help="Manage token identity: view scope and permissions, or generate HMAC values for server configuration")
 app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
 console = Console()
