@@ -3,6 +3,8 @@
 # Karol Siedlaczek 2026
 
 import os
+import grp
+import pwd
 import re
 import json
 import shlex
@@ -910,7 +912,12 @@ def update_in_place(
         os.chmod(pem_file, chmod_mode)
 
         if owner is not None or group is not None:
-            shutil.chown(pem_file, user=owner, group=group)
+            try:
+                shutil.chown(pem_file, user=owner, group=group)
+            except LookupError:
+                uid = pwd.getpwnam(owner).pw_uid if owner is not None else -1
+                gid = int(group) if group is not None and str(group).isdigit() else (grp.getgrnam(group).gr_gid if group is not None else -1)
+                os.lchown(pem_file, uid, gid)
 
         results.append(CertUpdateResult(
             cert=cert_id,
