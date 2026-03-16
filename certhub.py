@@ -664,7 +664,7 @@ def renew(
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
-    force: bool = Opt.force("Force certificate renew even if it does not expire")
+    force: bool = Opt.force("Force certificate renew even if it does not need to be renewed")
 ) -> None:
     settings = load_settings(ctx, format)
     client = Client.init(settings.api_url, settings.token, timeout=timeout)
