@@ -6,6 +6,7 @@ import os
 import re
 import json
 import shlex
+import shutil
 import typer
 import hmac
 import hashlib
@@ -703,7 +704,6 @@ def get(
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
     
-# TODO - Allow to set permissions and owner:group on pem files
 @cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
 def update_in_place(
     ctx: typer.Context,
@@ -719,9 +719,21 @@ def update_in_place(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expired certificate"
     ),
+    owner: str = typer.Option(
+        None, "--owner",
+        help="Owner of the certificate file (username or UID)"
+    ),
+    group: str = typer.Option(
+        None, "--group",
+        help="Group of the certificate file (group name or GID)"
+    ),
+    chmod: str = typer.Option(
+        "600", "--chmod",
+        help="Permissions for the certificate file in octal notation (default: 600)"
+    ),
     nagios_server: str = typer.Option(
         None, "--nagios-server",
-        help="Nagios/nsca server address (host or host:port). If set the command will send a passive check result via NSCA using 'send_nsca' (requires 'send_nsca' installed and configured)"  
+        help="Nagios/nsca server address (host or host:port). If set the command will send a passive check result via NSCA using 'send_nsca' (requires 'send_nsca' installed and configured)"
     ),
     nagios_hostname: str = typer.Option(
         None, "--nagios-hostname",
@@ -731,7 +743,11 @@ def update_in_place(
         None, '--nagios-service',
         help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
     )
-) -> None: 
+) -> None:
+    try:
+        chmod_mode = int(chmod, 8)
+    except ValueError:
+        raise typer.BadParameter(f"Invalid --chmod value '{chmod}', must be an octal number (e.g. 600, 640, 644)")
     settings = load_settings(ctx, format)
     nagios = Nagios.from_options(nagios_server, nagios_hostname, nagios_service)
     certs_dir = Path(dest_dir)
@@ -889,9 +905,13 @@ def update_in_place(
                 continue
             
         # Add or update local certificate
-            
-        pem_file.write_text(pem_bundle, encoding="UTF-8") 
-        
+
+        pem_file.write_text(pem_bundle, encoding="UTF-8")
+        os.chmod(pem_file, chmod_mode)
+
+        if owner is not None or group is not None:
+            shutil.chown(pem_file, user=owner, group=group)
+
         results.append(CertUpdateResult(
             cert=cert_id,
             code=ExitCode.OK,
