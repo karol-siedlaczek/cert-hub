@@ -729,7 +729,7 @@ def update_in_place(
     ),
     chmod: str = typer.Option(
         "600", "--chmod",
-        help="Permissions for the certificate file in octal notation (default: 600)"
+        help="Permissions for the certificate file in octal notation"
     ),
     nagios_server: str = typer.Option(
         None, "--nagios-server",
