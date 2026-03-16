@@ -699,7 +699,7 @@ def get(
     sensitive_columns = ("certificate", "chain", "private_key")
     
     result = CmdResult.from_response(response)
-    if not long:
+    if not long and response.ok:
         for d in result.data:
             for col in sensitive_columns:
                 d.pop(col, None)
