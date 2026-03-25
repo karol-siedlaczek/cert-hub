@@ -706,7 +706,7 @@ def get(
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
     
-@cert_app.command(help="Update local expired certificates in place by downloading new certificates from the server")
+@cert_app.command(help="Update local expiring or expired certificates in place by downloading new certificates from the server")
 def update_in_place(
     ctx: typer.Context,
     timeout: int = Opt.timeout(10),
@@ -719,7 +719,7 @@ def update_in_place(
     ),
     post_hook: str = typer.Option(
         None, "--post-hook",
-        help="Executable to run after successful update of any locally expired certificate"
+        help="Executable to run after successful update of any locally expiring or expired certificate"
     ),
     owner: str = typer.Option(
         None, "--owner",
