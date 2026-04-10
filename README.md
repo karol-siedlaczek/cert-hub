@@ -63,6 +63,25 @@ docker stop cert-hub && docker rm cert-hub
 ```
 
 ### Docker Compose
+Example `compose.yml`:
+```yaml
+services:
+  cert-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cert-hub
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      HMAC_KEY_B64: ${HMAC_KEY_B64}
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - ./logs:/logs
+      - ./letsencrypt:/letsencrypt
+```
+
 Set required environment:
 ```bash
 export HMAC_KEY_B64="<HMAC_KEY>"
