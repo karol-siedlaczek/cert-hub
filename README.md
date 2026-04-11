@@ -234,20 +234,20 @@ curl -s \
   "http://127.0.0.1:8080/api/certs/renew?match=example&force=true"
 ```
 
-## CLI (`certhub`)
+## CLI (`certhub.py`)
 Example usage:
 ```bash
 export CERTHUB_API_URL="http://127.0.0.1:8080"
 export CERTHUB_TOKEN="admin.my-raw-token"
 
-./certhub version
-./certhub token identity
-./certhub token scope
-./certhub cert health --exclude-ok
-./certhub cert get --pattern "example*"
-./certhub cert issue
-./certhub cert renew --pattern "example" --force
-./certhub cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
+./certhub.py version
+./certhub.py token identity
+./certhub.py token scope
+./certhub.py cert health --exclude-ok
+./certhub.py cert get --pattern "example*"
+./certhub.py cert issue
+./certhub.py cert renew --pattern "example" --force
+./certhub.py cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
 ```
 
 Optionally, you can store settings in `~/.certhub`:
