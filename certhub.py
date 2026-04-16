@@ -751,7 +751,7 @@ def update_in_place(
         help="Group of the certificate file (group name or GID)"
     ),
     chmod: str = typer.Option(
-        "600", "--chmod",
+        "640", "--chmod",
         help="Permissions for the certificate file in octal notation"
     ),
     nagios_service: str = typer.Option(
