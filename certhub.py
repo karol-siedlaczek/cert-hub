@@ -13,7 +13,6 @@ import typer
 import hmac
 import hashlib
 import base64
-import sys
 import click
 import binascii
 import subprocess
@@ -34,6 +33,9 @@ ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 ENV_VAR_LOG_FILE = "CERTHUB_LOG_FILE"
 ENV_VAR_LOG_LEVEL = "CERTHUB_LOG_LEVEL"
+ENV_VAR_NSCA_SERVER = "CERTHUB_NSCA_SERVER"
+ENV_VAR_NSCA_PORT = "CERTHUB_NSCA_PORT"
+ENV_VAR_NAGIOS_HOSTNAME = "CERTHUB_NAGIOS_HOSTNAME"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
 DATE_FMT = "%Y-%m-%d %H:%M"
 NAGIOS_ESCAPE_CHAR = "</br>"
@@ -146,6 +148,9 @@ class Settings:
     log_file: str | None
     log_level: str | None
     format: Format | None
+    nsca_server: str | None
+    nsca_port: int | None
+    nagios_hostname: str | None
 
 
 @dataclass
@@ -359,7 +364,7 @@ class CmdResult:
 
                 cols = list(rows[0].keys())
                 for c in cols:
-                    table.add_column(str(c), overflow="fold") # fold helps if mucho text
+                    table.add_column(str(c), overflow="fold") # Fold helps if mucho text
 
                 for row in rows:
                     table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
@@ -380,17 +385,18 @@ class CmdResult:
 class Nagios():
     NSCA_CMD: ClassVar[str] = "/usr/sbin/send_nsca"
     server: str
+    port: int
     hostname: str
     service: str
     
     @classmethod
-    def from_options(cls, server: str, hostname: str, service: str) -> "Nagios | None":
-        if not any((server, hostname, service)):
+    def from_options(cls, server: str, port: int, hostname: str, service: str) -> "Nagios | None":
+        if not service:
             return None
             
-        if not all([server, hostname, service]):
+        if service and not all([server, port, hostname]):
             raise typer.BadParameter(
-                "To send passive check result to Nagios options --nagios-server, --nagios-hostname and --nagios-service must be provided together"
+                "To send passive check result to Nagios all NSCA related options must be provided together. Run --help for details"
             )
         
         nsca_cmd_path = Path(Nagios.NSCA_CMD)
@@ -400,10 +406,10 @@ class Nagios():
                 f"Failed to setup sending passive check result to Nagios: Path '{nsca_cmd_path}' not found or not executable"
             )
 
-        return cls(server, hostname, service)
+        return cls(server, port, hostname, service)
     
     def send_passive_check_result(self, msg: str, code: ExitCode) -> str:
-        cmd = f"echo -e \"{self.hostname}\t{self.service}\t{code.value}\t{msg}\" | {Nagios.NSCA_CMD} -H {self.server}"
+        cmd = f"echo -e \"{self.hostname}\t{self.service}\t{code.value}\t{msg}\" | {Nagios.NSCA_CMD} -H {self.server} -p {self.port} --quiet"
         result = run_cmd(cmd, shell=True)
         
         if result.returncode != 0:
@@ -499,9 +505,24 @@ def main(
         None, "--log-level",
         envvar=ENV_VAR_LOG_LEVEL,
         help=f"Log level. You can set environment or set LOG_LEVEL=<value> in {SETTINGS_FILE}"
+    ),
+    nsca_server: str = typer.Option(
+        None, "--nsca-server",
+        envvar=ENV_VAR_NSCA_SERVER,
+        help=f"NSCA server address used by 'cert update-in-place' to send passive check results to Nagios via send_nsca. Requires send_nsca to be installed and configured on this host. Must be used together with --nagios-hostname and --nagios-service (on the command). You can set environment or set NSCA_SERVER=<value> in {SETTINGS_FILE}"
+    ),
+    nsca_port: int = typer.Option(
+        None, "--nsca-port",
+        envvar=ENV_VAR_NSCA_PORT,
+        help=f"NSCA server port used by 'cert update-in-place' when sending passive check results to Nagios. Defaults to 5667 if not specified. Only effective when --nsca-server is set. You can set environment or set NSCA_PORT=<value> in {SETTINGS_FILE}"
+    ),
+    nagios_hostname: str = typer.Option(
+        None, "--nagios-hostname",
+        envvar=ENV_VAR_NAGIOS_HOSTNAME,
+        help=f"Nagios host_name as defined in Nagios host object configuration, used by 'cert update-in-place' to identify the monitored host when sending passive check results via NSCA. Must be used together with --nsca-server and --nagios-service (on the command). You can set environment or set NAGIOS_HOSTNAME=<value> in {SETTINGS_FILE}"
     )
 ) -> None:
-    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None)
+    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None, nsca_server=nsca_server, nsca_port=nsca_port, nagios_hostname=nagios_hostname)
     
     
 @app.command(help="Versions and author")
@@ -733,14 +754,6 @@ def update_in_place(
         "600", "--chmod",
         help="Permissions for the certificate file in octal notation"
     ),
-    nagios_server: str = typer.Option(
-        None, "--nagios-server",
-        help="Nagios/nsca server address (host or host:port). If set the command will send a passive check result via NSCA using 'send_nsca' (requires 'send_nsca' installed and configured)"
-    ),
-    nagios_hostname: str = typer.Option(
-        None, "--nagios-hostname",
-        help="Nagios hostname to report (the 'host_name' used in Nagios objects definition)"
-    ),
     nagios_service: str = typer.Option(
         None, '--nagios-service',
         help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
@@ -751,7 +764,12 @@ def update_in_place(
     except ValueError:
         raise typer.BadParameter(f"Invalid --chmod value '{chmod}', must be an octal number (e.g. 600, 640, 644)")
     settings = load_settings(ctx, format)
-    nagios = Nagios.from_options(nagios_server, nagios_hostname, nagios_service)
+    nagios = Nagios.from_options(
+        settings.nsca_server,
+        settings.nsca_port,
+        settings.nagios_hostname,
+        nagios_service
+    )
     certs_dir = Path(dest_dir)
     
     if not certs_dir.exists():
@@ -992,6 +1010,13 @@ def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
         settings.log_file = file_settings.get("LOG_FILE")
     if not settings.log_level:
         settings.log_level = file_settings.get("LOG_LEVEL")
+    if not settings.nsca_server:
+        settings.nsca_server = file_settings.get("NSCA_SERVER")
+    if settings.nsca_port is None:
+        port = file_settings.get("NSCA_PORT")
+        settings.nsca_port = int(port) if port else None
+    if not settings.nagios_hostname:
+        settings.nagios_hostname = file_settings.get("NAGIOS_HOSTNAME")
 
     setup_logging(settings.log_file, settings.log_level)
     settings.format = Format.from_string(format)
