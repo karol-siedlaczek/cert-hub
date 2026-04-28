@@ -168,6 +168,10 @@ class Cert:
         return expire_date.astimezone(timezone.utc)
     
     
+    def get_days_to_expire(self) -> int:
+        return self._get_time_left().days
+    
+    
     def get_status(self) -> CertStatus:
         if not self.is_issued():
             return CertStatus.NOT_ISSUED
@@ -181,7 +185,7 @@ class Cert:
     
     def is_expiring(self) -> bool:
         certbot = CertBot.get_from_global_context()
-        return self._get_time_left().days <= certbot.renew_before_days
+        return self.get_days_to_expire() <= certbot.renew_before_days
 
 
     def is_expired(self) -> bool:
