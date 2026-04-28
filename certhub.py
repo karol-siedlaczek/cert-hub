@@ -968,11 +968,17 @@ def update_in_place(
     
     if nagios:
         highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
-        msg_parts = []
-        for r in results:
-            msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
-            
-        nagios.send_passive_check_result((NAGIOS_ESCAPE_CHAR).join(msg_parts), highest_exit_code)
+        
+        if highest_exit_code == ExitCode.OK:
+            nagios_msg = f"{ExitCode.OK.name}: All certificates are up to date"
+        else:
+            err_msg_parts = []
+            for r in results:
+                if r.code != ExitCode.OK:
+                    err_msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
+            nagios_msg = (NAGIOS_ESCAPE_CHAR).join(err_msg_parts)
+        
+        nagios.send_passive_check_result(nagios_msg, highest_exit_code)
 
     return result.render_and_exit(ctx.info_name, columns)
     
