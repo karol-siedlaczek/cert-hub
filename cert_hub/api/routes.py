@@ -51,11 +51,12 @@ def health() -> Response:
         
         try:
             if not (exclude_ok and status == CertStatus.OK):
-                certs_health.append({ 
-                    "id": cert.id, 
+                certs_health.append({
+                    "id": cert.id,
                     "status": status.value,
                     "msg": msg,
-                    "expire_date": cert.get_expire_date_as_str()
+                    "expire_date": cert.get_expire_date_as_str(),
+                    "days_to_expire": cert.get_days_to_expire()
                 })
             log_request(get_log_record(status, cert, msg), identity=context.identity, level="info")
         except CertException as e: # Not issued
@@ -63,7 +64,8 @@ def health() -> Response:
                 "id": cert.id,
                 "status": status.value,
                 "msg": e.msg,
-                "expire_date": None
+                "expire_date": None,
+                "days_to_expire": None
             })
             log_request(get_log_record(e.status, e.cert_id, e.msg), identity=context.identity, level="info")
     
