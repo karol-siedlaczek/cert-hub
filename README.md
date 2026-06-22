@@ -1,5 +1,7 @@
 # Cert Hub
 
+A management service for Let's Encrypt TLS certificates. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over certificates issued by `certbot` using DNS-01 challenges — issue, renew, read status and check health. Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate health to Nagios via NSCA.
+
 ## Development
 ### 1) Requirements
 - Python `3.12+`
@@ -27,7 +29,7 @@ export LOGS_DIR="$(pwd)/logs"
 
 ### 4) Start the application
 ```bash
-gunicorn wsgi:app
+gunicorn wsgi:app -c gunicorn.conf.py
 ```
 
 Quick test:
@@ -185,7 +187,7 @@ openssl rand -base64 32
 Use the built-in CLI command:
 ```bash
 # Variables can be provided by flags (use --help to show) or by prompt if any required variable is missing
-./certhub token gen-hmac --id admin
+python certhub.py token gen-hmac --id admin --hmac-key-b64 "$HMAC_KEY_B64"
 ```
 
 CLI will print a ready-to-use value:
@@ -199,17 +201,24 @@ Required authorization header:
 Authorization: Bearer <identity_id>.<token_raw>
 ```
 
+A request authenticates when:
+1. `<identity_id>` resolves to an identity declared in `config.yaml`.
+2. `HMAC-SHA256(token_raw, key) == TOKEN_<ID>_HMAC` (where `key` is the decoded `HMAC_KEY_B64`).
+3. The source IP is inside one of the identity's `allowed_cidrs`.
+
+Every request resolves to a **target certificate** and is authorized against the identity's permissions.
+
 Endpoints:
-| Method | Endpoint | Auth required | Query params |
-|:-------|:---------|:--------------|:-------------|
-| `GET` | `/ping` | :x: | - |
-| `GET` | `/api/version` | :x: | - |
-| `GET` | `/api/certs/health` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) |
-| `POST` | `/api/certs/issue` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) |
-| `POST` | `/api/certs/renew` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) |
-| `GET` | `/api/certs` | :heavy_check_mark: | `match` (0..n) |
-| `GET` | `/api/token/scope` | :heavy_check_mark: | - |
-| `GET` | `/api/token/identity` | :heavy_check_mark: | - |
+| Method | Endpoint | Auth required | Query params | Description |
+|:-------|:---------|:--------------|:-------------|:------------|
+| `GET` | `/ping` | :x: | - | Liveness probe, returns `pong`. |
+| `GET` | `/api/version` | :x: | - | Returns app metadata (name, author, app version, Python version). |
+| `GET` | `/api/token/identity` | :heavy_check_mark: | - | Returns the authenticated identity (`id`, `allowed_cidrs`, `permissions`). |
+| `GET` | `/api/token/scope` | :heavy_check_mark: | - | Returns, per action (`health`, `read`, `issue`, `renew`), the certificate IDs the identity is allowed to operate on. |
+| `GET` | `/api/certs` | :heavy_check_mark: | `match` (0..n) | Reads matched certificates — status, domains, expiration date, custom attributes and PEM material (chain, certificate, private key). Requires `read`. |
+| `GET` | `/api/certs/health` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) | Returns per-certificate health and an overall status (`OK` / `WARNING` / `CRITICAL`) based on expiration; intended for monitoring. Requires `health`. |
+| `POST` | `/api/certs/issue` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) | Issues matched certificates via certbot (DNS-01). `force` re-issues even if already issued. Requires `issue`. |
+| `POST` | `/api/certs/renew` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) | Renews matched certificates that are within the renewal window; `force` renews regardless. Returns next renewal/expiration dates. Requires `renew`. |
 
 Query params:
 - `match`:
@@ -235,29 +244,69 @@ curl -s \
 ```
 
 ## CLI (`certhub.py`)
+`certhub` is a Typer + Rich thin client over the API. It ships inside the image at `/app/certhub.py` and can also be run standalone (needs requests, typer, rich).
+
+Command tree:
+```text
+certhub
+├── version                         Show app/CLI versions and author
+├── token                           Manage token identity
+│   ├── identity                    Show current identity (allowed CIDRs, permissions)
+│   ├── scope                       List certificates permitted for the current identity
+│   └── gen-hmac                    Generate a TOKEN_<ID>_HMAC value for server configuration
+└── cert                            Manage certificates
+    ├── get                         List certificates available for the identity or pattern
+    ├── health                      Show statuses (expiring, not issued, etc.)
+    ├── issue                       Issue new certificates for the identity or pattern
+    ├── renew                       Renew existing certificates for the identity or pattern
+    └── update-in-place             Download and replace local expiring/expired certificate files in place
+```
+
+Run `certhub --help`, or `certhub <group> --help` / `certhub <group> <command> --help`, to see all options for each command.
+
+Each subcommand accepts `-t/--timeout` (default `10`), `-f/--format` (`table` (default), `json`, `kv`, `value`) and `-c/--column` (repeatable). Passwords are never echoed; they are read via a confirm prompt when omitted.
+
 Example usage:
 ```bash
 export CERTHUB_API_URL="http://127.0.0.1:8080"
 export CERTHUB_TOKEN="admin.my-raw-token"
 
-./certhub.py version
-./certhub.py token identity
-./certhub.py token scope
-./certhub.py cert health --exclude-ok
-./certhub.py cert get --pattern "example*"
-./certhub.py cert issue
-./certhub.py cert renew --pattern "example" --force
-./certhub.py cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
+# Show base information about app
+certhub version
+
+# Show token identity 
+certhub token identity
+
+# Show scope of current token
+certhub token scope
+
+# Show status for certs
+certhub cert health --exclude-ok
+
+# Show certificate information
+certhub cert get --pattern "example*"
+
+# Issue all not yet issued certificates
+certhub cert issue
+
+# Renew expiring or expired certificate (only for certs matching --pattern)
+certhub cert renew --pattern "example" --force
+
+# Update locally stored cert in place if server has newer version
+certhub cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
 ```
 
-Optionally, you can store settings in `~/.certhub`:
+Settings are resolved in this order (highest priority first):
+1. CLI flags (`--api-url`, `--token`, `--log-file`, `--log-level`).
+2. Environment variables: `CERTHUB_API_URL`, `CERTHUB_TOKEN`, `CERTHUB_LOG_FILE`, `CERTHUB_LOG_LEVEL`.
+3. `~/.certhub` file (must have `600` permissions, `chmod 600 ~/.certhub`):
+
 ```ini
 API_URL=http://127.0.0.1:8080
-TOKEN=admin.my-raw-token
-LOG_FILE=/var/log/certhub-cli.log # (Optional) Enables logging, also can be defined by env CERTHUB_LOG_FILE
+TOKEN=admin.my-secret-token
+LOG_FILE=/var/log/mailctl.log  # (Optional) Enables logging, also can be defined by env CERTHUB_LOG_FILE
 LOG_LEVEL=INFO # (Optional) Can be also defined by env CERTHUB_LOG_LEVEL
 ```
-The file must have `600` permissions (`chmod 600 ~/.certhub`).
 
 ## Recommendations
 - Store `HMAC_KEY_B64` and all `TOKEN_<ID>_HMAC` values in a secret manager.
