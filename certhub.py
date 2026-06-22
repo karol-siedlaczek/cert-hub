@@ -681,7 +681,7 @@ def issue(
 @cert_app.command(help="Renew existing certificates for the current identity or selected pattern")
 def renew(
     ctx: typer.Context,
-    timeout: int = Opt.timeout(360),
+    timeout: int = Opt.timeout(1000),
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
