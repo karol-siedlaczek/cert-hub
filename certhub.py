@@ -43,7 +43,7 @@ PEM_FILENAME_PATTERN = r"^[\w.-]+$"
 LOGGER = logging.getLogger("certhub-cli")
 
 app = typer.Typer(add_completion=True, help="CLI for managing certificates in Cert Hub")
-cert_app = typer.Typer(help="Manage certificates: list, issue, renew, check health, and update local certificate files in place")
+cert_app = typer.Typer(help="Manage certificates: list, issue, renew, check status, and update local certificate files in place")
 token_app = typer.Typer(help="Manage token identity: view scope and permissions, or generate HMAC values for server configuration")
 app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
@@ -609,8 +609,8 @@ def token_gen_hmac(
 # ── cert commands ────────────────────────────────────────────────────────────
 
 
-@cert_app.command(name = "health", help="Show statuses (expiring, not issued etc.) for the current identity or selected pattern")
-def cert_health(
+@cert_app.command(name = "status", help="Show statuses (expiring, not issued etc.) for the current identity or selected pattern")
+def cert_status(
     ctx: typer.Context,
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
@@ -626,7 +626,7 @@ def cert_health(
         **({"exclude_ok": "true"} if exclude_ok else {}),
         **({"match": patterns} if patterns else {})
     }
-    response = client.request("GET", "/api/certs/health", params=params)
+    response = client.request("GET", "/api/certs/status", params=params)
     
     result = CmdResult.from_response(response)
     if result.data.get("certs"):

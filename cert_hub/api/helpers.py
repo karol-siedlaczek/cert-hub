@@ -16,7 +16,7 @@ def get_remote_ip() -> str | None:
     if request.remote_addr:
         return request.remote_addr
     
-    xff = request.headers.get("X-Forwarder-For", "")
+    xff = request.headers.get("X-Forwarded-For", "")
     return xff.split(",")[0].strip() if xff else None
 
 
@@ -29,10 +29,6 @@ def log_request(msg: str, *, identity: Identity | None = None, level: str = "inf
     log_fn(f"{request.remote_addr} {request.method} {request.path} {f"({identity.id}) " if identity else ""}{msg}")
 
 
-def get_log_record(status: CertStatus, cert: Cert | str, msg: str) -> str:
-    return f"cert_id='{cert.id if isinstance(cert, Cert) else cert}', status='{status.value}', msg='{msg}'"
-
-
 def build_response(
     code: int,
     *,
@@ -40,7 +36,7 @@ def build_response(
     data: Any = None, 
     detail: Any | None = None
 ) -> Response:
-    payload = {}
+    payload: dict[str, Any] = {}
     
     if msg is not None:
         payload["message"] = msg
@@ -49,7 +45,6 @@ def build_response(
     if data is not None:
         payload["data"] = data
         
-    
     payload = {
         "method": request.method,
         "http_code": code,
@@ -86,10 +81,13 @@ def require_auth(remote_ip: str) -> Identity:
     
     if identity is None:
         raise AuthFailedException(f"Unknown identity '{identity_id}'")
-    elif not identity.is_token_valid(conf.hmac_key, identity_token):
+    if not identity.is_token_valid(conf.hmac_key, identity_token):
         raise AuthFailedException(f"Invalid token for identity '{identity_id}'")
-    
     if not identity.is_ip_allowed(remote_ip):
         raise AuthIpNotAllowedException(remote_ip)
     
     return identity
+
+
+def get_log_record(status: CertStatus, cert: Cert | str, msg: str) -> str:
+    return f"cert_id='{cert.id if isinstance(cert, Cert) else cert}', status='{status.value}', msg='{msg}'"

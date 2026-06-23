@@ -1,6 +1,6 @@
 # Cert Hub
 
-A management service for Let's Encrypt TLS certificates. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over certificates issued by `certbot` using DNS-01 challenges — issue, renew, read status and check health. Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate health to Nagios via NSCA.
+A management service for Let's Encrypt TLS certificates. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over certificates issued by `certbot` using DNS-01 challenges — issue, renew, read status and check status. Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate status to Nagios via NSCA.
 
 ## Development
 ### 1) Requirements
@@ -120,8 +120,9 @@ docker compose down
 | `CERTBOT_ACME_SERVER` | `string` | :x: | `https://acme-v02.api.letsencrypt.org/directory` | Certbot ACME endpoint |
 | `CERTBOT_BIN` | `string` | :x: | - | Path to `certbot` executable binary, if not provided path will be autodetected |
 | `CERTBOT_DIR` | `string` | :x: | `/letsencrypt` | Certbot working directory |
-| `AWS_ACCESS_KEY_ID` | `string` | :x: | - | Access key ID to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration |
-| `AWS_SECRET_ACCESS_KEY` | `string` | :x: | - | Secret access key to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration |
+| `AWS_ACCESS_KEY_ID` | `string` | :x: | - | Access key ID to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration. Also accepts `AWS_ACCESS_KEY_ID__FILE` pointing to a file with the value. |
+| `AWS_SECRET_ACCESS_KEY` | `string` | :x: | - | Secret access key to access Amazon Route 53. Required only if `aws` DNS provider is used in certificate configuration. Also accepts `AWS_SECRET_ACCESS_KEY__FILE` pointing to a file with the value. |
+| `CLOUDFLARE_DNS_API_TOKEN` | `string` | :x: | - | Cloudflare scoped API token (with `Zone:DNS:Edit`). Required only if `cloudflare` DNS provider is used in certificate configuration. Also accepts `CLOUDFLARE_DNS_API_TOKEN__FILE` pointing to a file with the token. |
 | `CERTBOT_RENEW_BEFORE_DAYS` | `number` | :x: | `30` | Days before expiration when a cert becomes renewable (1-60) |
 | `CERTBOT_TEST_CERT` | `bool` | :x: | `false` | If `true`, passes `--test-cert` to certbot (uses Let's Encrypt staging environment) |
 | `HMAC_KEY_B64` | `string` | :heavy_check_mark: | - | Base64 HMAC key (minimum 32 bytes after decoding), used to verify tokens. Changing this value requires regenerate all identity passwords! |
@@ -148,7 +149,7 @@ identities:
     allowed_cidrs:
       - "127.0.0.1/32"
     permissions:
-      - "*:health"
+      - "*:status"
       - "*:read"
       - "*:renew"
       - "*:issue"
@@ -164,13 +165,13 @@ identities:
 
 - `certs[].id` - unique certificate identifier.
 - `certs[].domains` - domain list passed to certbot.
-- `certs[].dns_provider` - currently supported value is `aws`.
+- `certs[].dns_provider` - supported values are `aws` (Route 53) and `cloudflare`.
 - `certs[].custom_attrs` - custom metadata returned by API (for example PEM filename for CLI workflows).
 - `identities[].id` - identity identifier used in token format `Bearer <id>.<token>`.
 - `identities[].allowed_cidrs` - CIDR list allowed to make requests for this identity.
 - `identities[].permissions` - permission entries in `"<scope>:<action>"` format, where:
   - `scope` - `*`, full `cert id`, or regex matched against `cert id`.
-  - `action` - `health`, `read`, `issue`, `renew`, or `*`.
+  - `action` - `status`, `read`, `issue`, `renew`, or `*`.
 
 If you have identities such as `admin` and `example`, you must provide following environments:
 ```ini
@@ -214,9 +215,9 @@ Endpoints:
 | `GET` | `/ping` | :x: | - | Liveness probe, returns `pong`. |
 | `GET` | `/api/version` | :x: | - | Returns app metadata (name, author, app version, Python version). |
 | `GET` | `/api/token/identity` | :heavy_check_mark: | - | Returns the authenticated identity (`id`, `allowed_cidrs`, `permissions`). |
-| `GET` | `/api/token/scope` | :heavy_check_mark: | - | Returns, per action (`health`, `read`, `issue`, `renew`), the certificate IDs the identity is allowed to operate on. |
+| `GET` | `/api/token/scope` | :heavy_check_mark: | - | Returns, per action (`status`, `read`, `issue`, `renew`), the certificate IDs the identity is allowed to operate on. |
 | `GET` | `/api/certs` | :heavy_check_mark: | `match` (0..n) | Reads matched certificates — status, domains, expiration date, custom attributes and PEM material (chain, certificate, private key). Requires `read`. |
-| `GET` | `/api/certs/health` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) | Returns per-certificate health and an overall status (`OK` / `WARNING` / `CRITICAL`) based on expiration; intended for monitoring. Requires `health`. |
+| `GET` | `/api/certs/status` | :heavy_check_mark: | `match` (0..n), `exclude_ok` (bool, default: `false`) | Returns per-certificate status and an overall status (`OK` / `WARNING` / `CRITICAL`) based on expiration; intended for monitoring. Requires `status`. |
 | `POST` | `/api/certs/issue` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) | Issues matched certificates via certbot (DNS-01). `force` re-issues even if already issued. Requires `issue`. |
 | `POST` | `/api/certs/renew` | :heavy_check_mark: | `match` (0..n), `force` (bool, default: `false`) | Renews matched certificates that are within the renewal window; `force` renews regardless. Returns next renewal/expiration dates. Requires `renew`. |
 
@@ -225,7 +226,7 @@ Query params:
   - repeatable param (for example `?match=cert-a&match=cert-b`)
   - accepted values: `*`, exact cert ID, or regex pattern (full match against cert ID)
   - default: `*` (all allowed certificates)
-- `exclude_ok` (`/api/certs/health`): bool, default `false`
+- `exclude_ok` (`/api/certs/status`): bool, default `false`
 - `force` (`/api/certs/issue`, `/api/certs/renew`): bool, default `false`
 - accepted bool values:
   - true: `1`, `true`, `True`, `yes`, `Yes`, or empty value (for example `?force=`)
@@ -235,7 +236,7 @@ Examples:
 ```bash
 curl -s \
   -H "Authorization: Bearer admin.my-raw-token" \
-  "http://127.0.0.1:8080/api/certs/health?match=*&exclude_ok=true"
+  "http://127.0.0.1:8080/api/certs/stattus?match=*&exclude_ok=true"
 
 curl -s \
   -X POST \
@@ -256,7 +257,7 @@ certhub
 │   └── gen-hmac                    Generate a TOKEN_<ID>_HMAC value for server configuration
 └── cert                            Manage certificates
     ├── list                        List certificates available for the identity or pattern
-    ├── health                      Show statuses (expiring, not issued, etc.)
+    ├── status                      Show statuses (expiring, not issued, etc.)
     ├── issue                       Issue new certificates for the identity or pattern
     ├── renew                       Renew existing certificates for the identity or pattern
     └── update-in-place             Download and replace local expiring/expired certificate files in place
@@ -281,7 +282,7 @@ certhub token identity
 certhub token scope
 
 # Show status for certs
-certhub cert health --exclude-ok
+certhub cert status --exclude-ok
 
 # Show certificate information
 certhub cert list --pattern "example*"

@@ -22,7 +22,8 @@ def create_app() -> Flask:
         config.certbot_dir,
         config.certbot_bin,
         config.certbot_renew_before_days,
-        config.certbot_test_cert
+        config.certbot_test_cert,
+        config.cloudflare_dns_api_token
     )
     app.extensions["config"] = config
     app.extensions["certbot"] = certbot
@@ -91,6 +92,11 @@ def setup_error_handlers(app: Flask) -> None:
     def handle_method_not_allowed(e: MethodNotAllowed) -> Response:
         log_request(e, level="warning")
         return build_response(405, msg=f"Method not allowed, valid methods are: {', '.join(e.valid_methods)}")
+
+    @app.errorhandler(ValidationError)
+    def handle_validation_error(e: ValidationError) -> Response:
+        log_request(f"ValidationError: {e}", level="warning")
+        return build_response(400, msg="Invalid request", detail=str(e))
 
     @app.errorhandler(AuthException)
     def handle_auth_exception(e: AuthException) -> Response:

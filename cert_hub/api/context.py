@@ -1,61 +1,64 @@
 import re
 from dataclasses import dataclass
 from typing import Pattern
-from cert_hub.exception.api_exceptions import ApiError, InvalidScopeException
+from cert_hub.exception.api_exceptions import InvalidRequestError, ResourceNotFound, PermissionDenied
 from cert_hub.api.helpers import require_auth, get_remote_ip
 from cert_hub.domain.identity import Identity
 from cert_hub.domain.permission import PermissionAction
 from cert_hub.domain.cert import Cert
 from cert_hub.conf.config import Config
 
+
 @dataclass(frozen=True)
-class Context():
+class Context:
     remote_ip: str
     identity: Identity
-    certs: list[Cert]
-    
+
+
     @classmethod
-    def build(
-        cls,
-        scopes: str | list[str], 
-        action: PermissionAction
-    ) -> "Context":
+    def authenticate(cls) -> "Context":
         remote_ip = get_remote_ip()
         identity = require_auth(remote_ip)
+        return cls(remote_ip, identity)
 
-        selected_certs = []
-        requested_scopes = set(scopes)
+
+    def resolve_scope(self, scopes: str | list[str], action: PermissionAction) -> list[Cert]:
         conf = Config.get_from_global_context()
-    
+        requested = [scopes] if isinstance(scopes, str) else list(scopes)
+
+        matched = self._match_certs(requested, conf.certs)
+        if not matched:
+            # the scope names no existing certificate → genuinely not found
+            raise ResourceNotFound(
+                "Not found any certificate for selected scope",
+                detail={"scope": requested, "action": action.value},
+            )
+
+        authorized = [c for c in matched if c.has_permission(self.identity, action)]
+        if not authorized:
+            # certs exist for the scope, but this identity may not act on them → forbidden
+            raise PermissionDenied(
+                "Not allowed to perform action on selected certificates",
+                detail={"identity": self.identity.id, "scope": requested, "action": action.value},
+            )
+        return authorized
+
+
+    @staticmethod
+    def _match_certs(scopes: list[str], certs: list[Cert]) -> list[Cert]:
         if "*" in scopes:
-            for cert in conf.certs:
-                if cert.has_permission(identity, action):
-                    selected_certs.append(cert)
-        else:
-            matched_cert_ids: set[str] = set()
-            cert_map = { c.id: c for c in conf.certs }
-            
-            for scope_pattern in requested_scopes:
-                if scope_pattern in cert_map:
-                    matched_cert_ids.add(scope_pattern)
-                    continue
-                
-                try:
-                    match: Pattern = re.compile(scope_pattern)
-                except re.error as e:
-                    raise ApiError(400, msg=f"Invalid cert scope pattern", detail={ "pattern": scope_pattern, "error": str(e) })
-                
-                for cert_id in cert_map.keys():
-                    if match.fullmatch(cert_id):
-                        matched_cert_ids.add(cert_id)
-                
-            for cert in conf.certs:
-                if cert.id in matched_cert_ids and cert.has_permission(identity, action):
-                    selected_certs.append(cert)
-                
-        if not selected_certs:
-            raise InvalidScopeException("Not found any certificate for selected scope and action", detail={ "scope": list(requested_scopes), "action": action.value })
-                
-        return cls(remote_ip, identity, selected_certs)
-    
-    
+            return list(certs)
+        
+        cert_map = {c.id: c for c in certs}
+        matched_ids: set[str] = set()
+        
+        for pattern in scopes:
+            if pattern in cert_map:
+                matched_ids.add(pattern)
+                continue
+            try:
+                rx: Pattern = re.compile(pattern)
+            except re.error as e:
+                raise InvalidRequestError("Invalid cert scope pattern", detail={"pattern": pattern, "error": str(e)})
+            matched_ids.update(cid for cid in cert_map if rx.fullmatch(cid))
+        return [c for c in certs if c.id in matched_ids]

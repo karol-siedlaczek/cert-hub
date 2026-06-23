@@ -1,0 +1,4 @@
+pytest
+Flask>=3.0.2,<4.0
+PyYAML>=6.0
+cryptography>=42.0

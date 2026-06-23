@@ -25,15 +25,15 @@ class Identity:
             Require.present(name, val)
             return val
         
-        id = get_required("id")
+        identity_id = get_required("id")
         allowed_cidrs = get_required("allowed_cidrs")
         raw_permissions = get_required("permissions")
         permissions = []
         
-        Require.type("id", id, str)
-        Require.match("id", id, r'^[A-Za-z_0-9]*$')
+        Require.type("id", identity_id, str)
+        Require.match("id", identity_id, r'^[A-Za-z_0-9]*$')
         
-        hmac_env = f"TOKEN_{str(id).upper()}_HMAC"
+        hmac_env = f"TOKEN_{str(identity_id).upper()}_HMAC"
         hmac_hex = Require.env(hmac_env)
         Require.min_len(hmac_env, os.getenv(hmac_env), 64)
         
@@ -46,7 +46,7 @@ class Identity:
             permission = Permission.from_string(i, permission)
             permissions.append(permission)
         
-        return cls(id, hmac_hex, allowed_cidrs, permissions)
+        return cls(identity_id, hmac_hex, allowed_cidrs, permissions)
 
 
     def is_token_valid(self, hmac_key: bytes, token: str) -> bool:

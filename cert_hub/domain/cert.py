@@ -53,7 +53,7 @@ class Cert:
         Require.one_of("dns_provider", dns_provider_raw, DnsProvider.values())
         dns_provider = DnsProvider(dns_provider_raw)
         Require.installed_module("dns_provider", dns_provider.value, dns_provider.get_required_module())
-        Require.envs(dns_provider.get_required_envs())
+        Require.secret_envs(dns_provider.get_required_envs())
     
         return cls(id, email, tuple(domains), custom_attrs, dns_provider)
 

@@ -9,7 +9,7 @@ class ApiError(Exception):
         code: int,
         *,
         msg: str,
-        detail: str | None = None,
+        detail: object | None = None,
         level: str = "warning"
     ) -> None:
         self.code = code
@@ -24,16 +24,26 @@ class InvalidRequestError(ApiError):
         self,
         msg: str,
         *,
-        detail: str | None = None
+        detail: object | None = None
     ) -> None:
         super().__init__(400, msg=msg, detail=detail)
 
 
-class InvalidScopeException(ApiError):
+class PermissionDenied(ApiError):
     def __init__(
         self,
         msg: str,
         *,
-        detail: str | None = None
+        detail: object | None = None
+    ) -> None:
+        super().__init__(403, msg=msg, detail=detail)
+
+
+class ResourceNotFound(ApiError):
+    def __init__(
+        self,
+        msg: str,
+        *,
+        detail: object | None = None
     ) -> None:
         super().__init__(404, msg=msg, detail=detail)

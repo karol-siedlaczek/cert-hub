@@ -1,11 +1,15 @@
+import os
 import subprocess
 import logging
+import tempfile
 from pathlib import Path
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Sequence, Optional, cast
+from typing import Sequence, Optional, cast, Iterator
 from flask import current_app as app, g
 from cert_hub.domain.dns_provider import DnsProvider
 from cert_hub.exception.cert_exceptions import CertBotError
+from cert_hub.exception.validator_exceptions import ValidationError
 
 log = logging.getLogger(__name__)
 
@@ -19,7 +23,8 @@ class CertBot:
     exe_path: Path
     renew_before_days: int
     base_args: Sequence[str]
-    
+    cloudflare_dns_api_token: Optional[str] = None
+
     @classmethod
     def load(
         cls,
@@ -27,7 +32,8 @@ class CertBot:
         base_dir: Path,
         exe_path: Path,
         renew_before_days: int,
-        test_cert: bool = False
+        test_cert: bool = False,
+        cloudflare_dns_api_token: Optional[str] = None
     ) -> "CertBot":
         work_dir = base_dir / "work"
         logs_dir = base_dir / "logs"
@@ -53,7 +59,8 @@ class CertBot:
             conf_dir = conf_dir,
             exe_path = exe_path,
             renew_before_days = renew_before_days,
-            base_args = base_args
+            base_args = base_args,
+            cloudflare_dns_api_token = cloudflare_dns_api_token
         )
     
 
@@ -65,36 +72,38 @@ class CertBot:
 
 
     def issue(self, cert_name: str, domains: list[str], email: str, dns_provider: DnsProvider) -> None:
-        cmd = [
-            str(self.exe_path), 
-            "certonly",
-            "--cert-name", cert_name,
-            "-d", (',').join(domains),
-            "--email", email,
-            f"--{dns_provider.get_plugin()}",
-            "--agree-tos",
-            *self.base_args
-        ]
-        log.debug(f"Certbot issue command for '{cert_name}' certificate: {' '.join(cmd)}")
-        
-        result = self._run_cmd(cmd)
-        if result.returncode != 0:
-            raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
+        with self._dns_provider_args(dns_provider) as dns_args:
+            cmd = [
+                str(self.exe_path),
+                "certonly",
+                "--cert-name", cert_name,
+                "-d", (',').join(domains),
+                "--email", email,
+                *dns_args,
+                "--agree-tos",
+                *self.base_args
+            ]
+            log.debug(f"Certbot issue command for '{cert_name}' certificate: {' '.join(cmd)}")
+
+            result = self._run_cmd(cmd)
+            if result.returncode != 0:
+                raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
 
     
     def renew(self, cert_name: str, dns_provider: DnsProvider) -> None:
-        cmd = [
-            str(self.exe_path), 
-            "renew",
-            "--cert-name", cert_name,
-            f"--{dns_provider.get_plugin()}",
-            *self.base_args
-        ]
-        log.debug(f"Certbot renew command for '{cert_name}' certificate: {' '.join(cmd)}")
-        
-        result = self._run_cmd(cmd)
-        if result.returncode != 0:
-            raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
+        with self._dns_provider_args(dns_provider) as dns_args:
+            cmd = [
+                str(self.exe_path),
+                "renew",
+                "--cert-name", cert_name,
+                *dns_args,
+                *self.base_args
+            ]
+            log.debug(f"Certbot renew command for '{cert_name}' certificate: {' '.join(cmd)}")
+
+            result = self._run_cmd(cmd)
+            if result.returncode != 0:
+                raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
     
         
     def get_cert_path(self, cert_name: str) -> Path:
@@ -107,6 +116,22 @@ class CertBot:
 
     def get_private_key_path(self, cert_name: str) -> Path:
         return self.conf_dir / "live" / cert_name / "privkey.pem"
+
+    @contextmanager
+    def _dns_provider_args(self, dns_provider: DnsProvider) -> Iterator[list[str]]:
+        if dns_provider == DnsProvider.CF:
+            if not self.cloudflare_dns_api_token:
+                raise ValidationError(
+                    "Cloudflare DNS API token is not configured "
+                    "(set CLOUDFLARE_DNS_API_TOKEN or CLOUDFLARE_DNS_API_TOKEN__FILE)"
+                )
+            with tempfile.NamedTemporaryFile("w", suffix=".ini", encoding="utf-8") as f:
+                os.chmod(f.name, 0o600)
+                f.write(f"dns_cloudflare_api_token = {self.cloudflare_dns_api_token}\n")
+                f.flush()
+                yield [f"--{dns_provider.get_plugin()}", "--dns-cloudflare-credentials", f.name]
+        else:
+            yield [f"--{dns_provider.get_plugin()}"]
 
     def _run_cmd(
         self,

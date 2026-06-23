@@ -8,7 +8,7 @@ class PermissionAction(Enum):
     READ = "read"
     ISSUE = "issue"
     RENEW = "renew"
-    HEALTH = "health"
+    STATUS = "status"
     
     @classmethod
     def values(cls) -> list[str]:
@@ -30,9 +30,13 @@ class Permission:
             field=f"permissions[{index}]", 
             val=permission, 
             pattern=permission_pattern,
-            custom_err=f"Key 'permissions[{index}]' with '{permission}' permission is invalid, value needs to be provided in following format: '(*|<cert_pattern>):({('|').join(PermissionAction.values())})'"
+            custom_err=(
+                f"Key 'permissions[{index}]' with '{permission}' permission is invalid, "
+                f"value needs to be provided in following format: "
+                f"'(*|<cert_pattern>):({('|').join(PermissionAction.values())})'")
         )
         scope, action_raw = match.groups()
+        Require.present(f"permissions[{index}].scope", scope)
         Require.one_of(f"permissions[{index}]", action_raw, PermissionAction.values())
         
         return cls(scope, PermissionAction(action_raw))

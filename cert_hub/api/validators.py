@@ -1,3 +1,4 @@
+from datetime import datetime
 from flask import request
 from typing import Any, Callable, TypeVar
 from cert_hub.exception.api_exceptions import InvalidRequestError
@@ -108,6 +109,28 @@ def query_int(
     return val
 
 
+def query_date(
+    name: str,
+    *,
+    default: datetime | None = None,
+    required: bool = False
+) -> datetime | None:
+    raw_val = request.args.get(name)
+
+    if raw_val is None or raw_val.strip() == "":
+        if required:
+            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
+        elif default:
+            return default
+        else:
+            return None
+
+    try:
+        return datetime.fromisoformat(raw_val.strip())
+    except ValueError:
+        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "ISO 8601 date/datetime", "example": "2026-06-30 or 2026-06-30T12:00:00" })
+
+
 def json_body(
     *,
     default: dict = None,
@@ -124,7 +147,7 @@ def json_body(
             return {}
     
     if not isinstance(data, dict):
-        raise InvalidRequestError("Invalid JSON body", detail={ "expected", "JSON object" })
+        raise InvalidRequestError("Invalid JSON body", detail={ "expected": "JSON object" })
     
     return data
 
