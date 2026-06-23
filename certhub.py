@@ -17,6 +17,7 @@ import click
 import binascii
 import subprocess
 import logging
+import requests
 from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone
 from enum import Enum
@@ -26,7 +27,6 @@ from rich.console import Console
 from rich.table import Table, box
 from dataclasses import dataclass
 from typing import Any, Optional, Dict, Sequence, NoReturn, ClassVar
-import requests
 from cryptography import x509
 
 ENV_VAR_API_URL = "CERTHUB_API_URL"
@@ -42,15 +42,15 @@ NAGIOS_ESCAPE_CHAR = "</br>"
 PEM_FILENAME_PATTERN = r"^[\w.-]+$"
 LOGGER = logging.getLogger("certhub-cli")
 
-app = typer.Typer(
-    add_completion=True, 
-    help="CLI for managing certificates in Cert Hub"
-)
+app = typer.Typer(add_completion=True, help="CLI for managing certificates in Cert Hub")
 cert_app = typer.Typer(help="Manage certificates: list, issue, renew, check health, and update local certificate files in place")
 token_app = typer.Typer(help="Manage token identity: view scope and permissions, or generate HMAC values for server configuration")
 app.add_typer(cert_app, name="cert")
 app.add_typer(token_app, name="token")
 console = Console()
+
+
+# ── base classes ────────────────────────────────────────────────────────
 
 
 class ExitCode(Enum):
@@ -120,28 +120,6 @@ class Opt:
 
 
 @dataclass
-class CertUpdateResult:
-    cert: str
-    code: ExitCode
-    pem_file: Path | None
-    remote_expire_date: datetime | None
-    local_expire_date: datetime | None
-    updated: bool
-    msg: str
-    
-    def to_serializable(self) -> dict:
-        return {
-            "id": self.cert,
-            "status": self.code.name,
-            "pem_file": str(self.pem_file),
-            "local_expire_date": datetime.strftime(self.local_expire_date, DATE_FMT) if self.local_expire_date else None,
-            "remote_expire_date": datetime.strftime(self.remote_expire_date, DATE_FMT) if self.remote_expire_date else None,
-            "updated": self.updated,
-            "msg": self.msg
-        }
-        
-
-@dataclass
 class Settings:
     api_url: str | None
     token: str | None
@@ -189,9 +167,7 @@ class CmdResult:
 
         payload.pop("timestamp", None)
         if response.ok:
-            payload.pop("path", None)
-            payload.pop("code", None)
-            payload = payload['data']
+            payload = payload.get("data", payload)
             
         return payload
     
@@ -359,6 +335,7 @@ class CmdResult:
                 _print(data)
         elif fmt == Format.TABLE:
             rows = data if isinstance(data, list) else [data]
+            rows = [r for r in rows if isinstance(r, dict)]
             if rows:
                 table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
 
@@ -369,6 +346,8 @@ class CmdResult:
                 for row in rows:
                     table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
                 _print(table)
+            elif data:
+                _print(data)
         
         data_to_log = data
         if not LOGGER.disabled and sensitive_columns:
@@ -379,6 +358,65 @@ class CmdResult:
             f"{f"Result for {context_info} command: " if context_info else ""}{data_to_log}"
         )
         raise typer.Exit(code=self.exit_code.value)
+
+
+@dataclass(frozen=True)
+class Client():
+    base_url: str
+    session: requests.Session
+    timeout: int
+    
+    @classmethod
+    def init(
+        cls,
+        ctx: typer.Context,
+        fmt: str | None,
+        *,
+        timeout: int, 
+        nagios: "Nagios" | None = None
+    ) -> "Client":
+        settings = load_settings(ctx, fmt)
+        
+        base_url = settings.api_url.rstrip("/")
+        session = requests.Session()
+        
+        if settings.token:
+            session.headers.update({"Authorization": f"Bearer {settings.token}"})
+
+        session.headers.update({"Accept": "application/json"})
+        
+        try:
+            session.request("GET", f"{base_url}/ping", timeout=10)
+        except requests.RequestException as e:
+            msg = "Error connecting to API server"
+            exit_code = ExitCode.CRITICAL
+            
+            if nagios:
+                nagios.send_passive_check_result(f"{exit_code.name}: {msg}, error: {e}", exit_code)
+            result = CmdResult.from_dict({"msg": msg, "error": str(e)}, exit_code)
+            return result.render_and_exit()
+            
+        return cls(base_url, session, timeout or 10)
+    
+    def request(
+        self, 
+        method: str, 
+        path: str, 
+        *, 
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+    ) -> requests.Response:
+        url = f"{self.base_url}{path}"
+        
+        response = self.session.request(
+            method=method.upper(),
+            url=url,
+            params=params,
+            json=json_body,
+            timeout=self.timeout
+        )
+        
+        return response
 
 
 @dataclass
@@ -423,65 +461,10 @@ class Nagios():
             return result.render_and_exit()
             
         return result.stdout
-    
 
-@dataclass(frozen=True)
-class Client():
-    base_url: str
-    session: requests.Session
-    timeout: int
-    
-    @classmethod
-    def init(
-        cls, 
-        base_url: str, 
-        token: Optional[str] = None, 
-        *,
-        timeout: int, 
-        nagios: Nagios | None = None
-    ) -> "Client":
-        base_url = base_url.rstrip("/")
-        session = requests.Session()
-        
-        if token:
-            session.headers.update({"Authorization": f"Bearer {token}"})
 
-        session.headers.update({"Accept": "application/json"})
-        
-        try:
-            session.request("GET", f"{base_url}/ping", timeout=10)
-        except requests.RequestException as e:
-            msg = "Error connecting to API server"
-            exit_code = ExitCode.CRITICAL
-            
-            if nagios:
-                nagios.send_passive_check_result(f"{exit_code.name}: {msg}, error: {e}", exit_code)
-            result = CmdResult.from_dict({"msg": msg, "error": str(e)}, exit_code)
-            return result.render_and_exit()
-            
-        return cls(base_url, session, timeout or 10)
-    
-    def request(
-        self, 
-        method: str, 
-        path: str, 
-        *, 
-        params: Optional[Dict[str, Any]] = None,
-        json_body: Optional[Dict[str, Any]] = None,
-    ) -> requests.Response:
-        url = f"{self.base_url}{path}"
-        
-        response = self.session.request(
-            method=method.upper(),
-            url=url,
-            params=params,
-            json=json_body,
-            timeout=self.timeout
-        )
-        
-        return response
+# ── callback + root commands ─────────────────────────────────────────────────
 
-# Commands
 
 @app.callback()
 def main(
@@ -524,7 +507,7 @@ def main(
 ) -> None:
     ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None, nsca_server=nsca_server, nsca_port=nsca_port, nagios_hostname=nagios_hostname)
     
-    
+
 @app.command(help="Versions and author")
 def version(
     ctx: typer.Context,
@@ -532,49 +515,45 @@ def version(
     format: str = Opt.format(),
     columns: list[str] = Opt.columns()
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/version")
-    
     result = CmdResult.from_response(response)
     return result.render_and_exit(ctx.info_name, columns)
+    
+    
+# ── token commands ───────────────────────────────────────────────────────────
 
-
-@token_app.command(help="Permitted certificates for current identity")
-def scope(
+@token_app.command(name = "scope", help="Permissions for the current identity")
+def token_scope(
     ctx: typer.Context,
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
     columns: list[str] = Opt.columns()
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/token/scope")
-    
     result = CmdResult.from_response(response)
     return result.render_and_exit(ctx.info_name, columns)
     
     
-@token_app.command(help="Current identity information (e.g. allowed CIDRs, permissions)")
-def identity(
+@token_app.command(name = "identity", help="Current identity (allowed CIDRs, permissions)")
+def token_identity(
     ctx: typer.Context,
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
     columns: list[str] = Opt.columns()
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/token/identity")
-    
     result = CmdResult.from_response(response)
-    if result.data.get("permissions"):
-        result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
     
+    if isinstance(result.data, dict) and result.data.get("permissions"):
+        result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
     return result.render_and_exit(ctx.info_name, columns)
 
 
-@token_app.command(help="Generate TOKEN_<ID>_HMAC value for server configuration") 
-def gen_hmac(
+@token_app.command(name="gen-hmac", help="Generate TOKEN_<ID>_HMAC for server configuration") 
+def token_gen_hmac(
     hmac_key_b64: str = typer.Option(
         None, "--hmac-key-b64",
         help="Base64-encoded HMAC key, min length is at least 32 bytes (must match server HMAC_KEY_B64). If not provided, you will be prompted (Recommended)",
@@ -593,16 +572,13 @@ def gen_hmac(
     if hmac_key_b64 is None:
         hmac_key_b64 = getpass("HMAC key (base64): ").strip()
     if token_value is None:
-        token_value_1 = getpass("Token value: ").strip()
-        token_value_2 = getpass("Confirm token value: ").strip()
+        t1, t2 = getpass("Token value: ").strip(), getpass("Confirm token value: ").strip()
         
-        if token_value_1 != token_value_2:
+        if t1 != t2:
             raise typer.BadParameter("Token values do not match")
-        
-        if not token_value_1:
+        if not t1:
             raise typer.BadParameter("Token value cannot be empty")
-        
-        token_value = token_value_1
+        token_value = t1
         
     try:
         hmac_key = base64.b64decode(hmac_key_b64, validate=True)
@@ -623,15 +599,18 @@ def gen_hmac(
         )
 
     token = str(token_value).encode()
-    hmac_key = hmac.new(hmac_key, token, hashlib.sha256)
+    digest = hmac.new(hmac_key, token, hashlib.sha256).hexdigest()
     
     typer.secho("\nSuccess!\n", fg=typer.colors.GREEN)
     print("Add the following environment variable to the server:")
-    print(f"TOKEN_{token_id.upper()}_HMAC={hmac_key.hexdigest()}\n")
+    print(f"TOKEN_{token_id.upper()}_HMAC={digest}\n")
 
 
-@cert_app.command(help="Show statuses (expiring, not issued etc.) for the current identity or selected pattern")
-def health(
+# ── cert commands ────────────────────────────────────────────────────────────
+
+
+@cert_app.command(name = "health", help="Show statuses (expiring, not issued etc.) for the current identity or selected pattern")
+def cert_health(
     ctx: typer.Context,
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
@@ -642,8 +621,7 @@ def health(
         help="Hide certificates with OK status"
     )
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     params = {
         **({"exclude_ok": "true"} if exclude_ok else {}),
         **({"match": patterns} if patterns else {})
@@ -657,8 +635,8 @@ def health(
     return result.render_and_exit(ctx.info_name, columns)
     
 
-@cert_app.command(help="Issue new certificates for the current identity or selected pattern")
-def issue(
+@cert_app.command(name = "issue", help="Issue new certificates for the current identity or selected pattern")
+def cert_issue(
     ctx: typer.Context,
     timeout: int = Opt.timeout(360),
     format: str = Opt.format(),
@@ -666,8 +644,7 @@ def issue(
     columns: list[str] = Opt.columns(),
     force: bool = Opt.force("Force reissue of certificate even if it already exists")
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     params = {
         **({"force": "true"} if force else {}),
         **({"match": patterns} if patterns else {})
@@ -678,8 +655,8 @@ def issue(
     return result.render_and_exit(ctx.info_name, columns)
 
 
-@cert_app.command(help="Renew existing certificates for the current identity or selected pattern")
-def renew(
+@cert_app.command(name = "renew", help="Renew existing certificates for the current identity or selected pattern")
+def cert_renew(
     ctx: typer.Context,
     timeout: int = Opt.timeout(1000),
     format: str = Opt.format(),
@@ -687,8 +664,7 @@ def renew(
     columns: list[str] = Opt.columns(),
     force: bool = Opt.force("Force certificate renew even if it does not need to be renewed")
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     params = {
         **({"force": "true"} if force else {}),
         **({"match": patterns} if patterns else {})
@@ -699,8 +675,8 @@ def renew(
     return result.render_and_exit(ctx.info_name, columns)
     
 
-@cert_app.command(help="List certificates available for the current identity or selected pattern")
-def get(
+@cert_app.command(name = "list", help="List certificates available for the current identity or selected pattern")
+def cert_list(
     ctx: typer.Context,
     timeout: int = Opt.timeout(360),
     format: str = Opt.format(),
@@ -711,8 +687,7 @@ def get(
         help="Add to output sensitive data like certificate, chain and private key"
     )
 ) -> None:
-    settings = load_settings(ctx, format)
-    client = Client.init(settings.api_url, settings.token, timeout=timeout)
+    client = Client.init(ctx, format, timeout=timeout)
     params = {
         **({"match": patterns} if patterns else {})
     }
@@ -727,8 +702,8 @@ def get(
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
     
-@cert_app.command(help="Update local expiring or expired certificates in place by downloading new certificates from the server")
-def update_in_place(
+@cert_app.command(name = "update-in-place", help="Update local expiring or expired certificates in place by downloading new certificates from the server")
+def cert_update_in_place(
     ctx: typer.Context,
     timeout: int = Opt.timeout(10),
     format: str = Opt.format(),
@@ -759,6 +734,27 @@ def update_in_place(
         help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
     )
 ) -> None:
+    @dataclass
+    class CertUpdateResult:
+        cert: str
+        code: ExitCode
+        pem_file: Path | None
+        remote_expire_date: datetime | None
+        local_expire_date: datetime | None
+        updated: bool
+        msg: str
+        
+        def to_serializable(self) -> dict:
+            return {
+                "id": self.cert,
+                "status": self.code.name,
+                "pem_file": str(self.pem_file),
+                "local_expire_date": datetime.strftime(self.local_expire_date, DATE_FMT) if self.local_expire_date else None,
+                "remote_expire_date": datetime.strftime(self.remote_expire_date, DATE_FMT) if self.remote_expire_date else None,
+                "updated": self.updated,
+                "msg": self.msg
+            }
+            
     try:
         chmod_mode = int(chmod, 8)
     except ValueError:
@@ -781,7 +777,7 @@ def update_in_place(
         **({"match": patterns} if patterns else {})
     }
     
-    client = Client.init(settings.api_url, settings.token, timeout=timeout, nagios=nagios)
+    client = Client.init(ctx, format, timeout=timeout, nagios=nagios)
     response = client.request("GET", "/api/certs", params=params)
     result = CmdResult.from_response(response)
     
@@ -982,56 +978,8 @@ def update_in_place(
 
     return result.render_and_exit(ctx.info_name, columns)
     
-# Helper functions
 
-def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
-    settings = ctx.obj
-    if not isinstance(settings, Settings):
-        raise typer.Exit(code=2)
-    
-    file_settings: dict[str, str] = {}
-    if SETTINGS_FILE.exists():
-        file_mode = SETTINGS_FILE.stat().st_mode & 0o777
-        if file_mode != 0o600:
-            raise typer.BadParameter(
-                f"Invalid permissions for {SETTINGS_FILE}: expected 'rw-------' (600), got {file_mode:o}, use command:\nchmod 600 {SETTINGS_FILE}"
-            )
-
-        for line in read_file(SETTINGS_FILE).splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            if "=" not in line:
-                continue
-
-            key, value = line.split("=", 1)
-            file_settings[key.strip().upper()] = value.strip()
-
-    if not settings.api_url:
-        settings.api_url = file_settings.get("API_URL")
-    if not settings.token:
-        settings.token = file_settings.get("TOKEN")
-    if not settings.log_file:
-        settings.log_file = file_settings.get("LOG_FILE")
-    if not settings.log_level:
-        settings.log_level = file_settings.get("LOG_LEVEL")
-    if not settings.nsca_server:
-        settings.nsca_server = file_settings.get("NSCA_SERVER")
-    if settings.nsca_port is None:
-        port = file_settings.get("NSCA_PORT")
-        settings.nsca_port = int(port) if port else None
-    if not settings.nagios_hostname:
-        settings.nagios_hostname = file_settings.get("NAGIOS_HOSTNAME")
-
-    setup_logging(settings.log_file, settings.log_level)
-    settings.format = Format.from_string(format)
-    
-    if not settings.api_url:
-        raise typer.BadParameter(
-            f"Provide --api-url, set {ENV_VAR_API_URL} environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
-        )
-    return settings
+# ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def get_ctx_settings() -> Settings:
@@ -1076,6 +1024,53 @@ def setup_logging(log_file: str | None, log_level: str | None) -> None:
     logger.setLevel(level)
 
 
+def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
+    settings = ctx.obj
+    if not isinstance(settings, Settings):
+        raise typer.Exit(code=2)
+    
+    file_settings: dict[str, str] = {}
+    if SETTINGS_FILE.exists():
+        file_mode = SETTINGS_FILE.stat().st_mode & 0o777
+        if file_mode != 0o600:
+            raise typer.BadParameter(
+                f"Invalid permissions for {SETTINGS_FILE}: expected 'rw-------' (600), got {file_mode:o}, use command:\nchmod 600 {SETTINGS_FILE}"
+            )
+
+        for line in read_file(SETTINGS_FILE).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            file_settings[key.strip().upper()] = value.strip()
+
+    if not settings.api_url:
+        settings.api_url = file_settings.get("API_URL")
+    if not settings.token:
+        settings.token = file_settings.get("TOKEN")
+    if not settings.log_file:
+        settings.log_file = file_settings.get("LOG_FILE")
+    if not settings.log_level:
+        settings.log_level = file_settings.get("LOG_LEVEL")
+    if not settings.nsca_server:
+        settings.nsca_server = file_settings.get("NSCA_SERVER")
+    if settings.nsca_port is None:
+        port = file_settings.get("NSCA_PORT")
+        settings.nsca_port = int(port) if port else None
+    if not settings.nagios_hostname:
+        settings.nagios_hostname = file_settings.get("NAGIOS_HOSTNAME")
+
+    setup_logging(settings.log_file, settings.log_level)
+    settings.format = Format.from_string(format)
+    
+    if not settings.api_url:
+        raise typer.BadParameter(
+            f"Provide --api-url, set {ENV_VAR_API_URL} environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
+        )
+    return settings
+
+
 def read_file(file_path: Path) -> str:
     try:
         return file_path.read_text(encoding="utf-8")
@@ -1112,6 +1107,7 @@ def get_cert_expire_date(cert_file: Path) -> datetime:
 
 def safe_str(x: object) -> str:
     return str(x).encode("unicode_escape").decode()
+
 
 def run_cmd(
     args: Sequence[str] | str,

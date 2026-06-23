@@ -255,7 +255,7 @@ certhub
 │   ├── scope                       List certificates permitted for the current identity
 │   └── gen-hmac                    Generate a TOKEN_<ID>_HMAC value for server configuration
 └── cert                            Manage certificates
-    ├── get                         List certificates available for the identity or pattern
+    ├── list                        List certificates available for the identity or pattern
     ├── health                      Show statuses (expiring, not issued, etc.)
     ├── issue                       Issue new certificates for the identity or pattern
     ├── renew                       Renew existing certificates for the identity or pattern
@@ -284,7 +284,7 @@ certhub token scope
 certhub cert health --exclude-ok
 
 # Show certificate information
-certhub cert get --pattern "example*"
+certhub cert list --pattern "example*"
 
 # Issue all not yet issued certificates
 certhub cert issue
