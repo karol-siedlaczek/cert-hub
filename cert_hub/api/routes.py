@@ -176,7 +176,7 @@ def cert_status() -> Response:
                     "days_to_expire": cert.get_days_to_expire()
                 })
             log_request(get_log_record(status, cert, msg), identity=ctx.identity, level="info")
-        except CertException as e: # Not issued
+        except CertException as e: # not_issued, revoked, key_missing, cert_missing etc.
             certs_statuses.append({
                 "id": cert.id,
                 "type": cert.type.value,
@@ -268,14 +268,20 @@ def cert_issue(cert_id: str) -> Response:
         return build_response(200, data=payload)
     except CertException as e:
         log_request(get_log_record(e.status, e.cert_id, e.msg), identity=ctx.identity, level="warning")
+        try:
+            next_renew_date = cert.get_next_renew_date_as_str()
+            expire_date = cert.get_expire_date_as_str()
+            days_to_expire = cert.get_days_to_expire()
+        except CertException:
+            next_renew_date = expire_date = days_to_expire = None
         payload = {
-            "id": cert.id, 
+            "id": cert.id,
             "type": cert.type.value,
             "status": e.status.value,
             "msg": e.msg,
-            "next_renew_date": None,
-            "expire_date": None,
-            "days_to_expire": None
+            "next_renew_date": next_renew_date,
+            "expire_date": expire_date,
+            "days_to_expire": days_to_expire
         }
         return build_response(409, data=payload)
 
@@ -303,14 +309,20 @@ def cert_renew(cert_id: str) -> Response:
         return build_response(200, data=payload)
     except CertException as e:
         log_request(get_log_record(e.status, e.cert_id, e.msg), identity=ctx.identity, level="info")
+        try:
+            next_renew_date = cert.get_next_renew_date_as_str()
+            expire_date = cert.get_expire_date_as_str()
+            days_to_expire = cert.get_days_to_expire()
+        except CertException:
+            next_renew_date = expire_date = days_to_expire = None
         payload = {
             "id": cert.id,
             "type": cert.type.value,
             "status": e.status.value,
             "msg": e.msg,
-            "next_renew_date": None,
-            "expire_date": None,
-            "days_to_expire": None
+            "next_renew_date": next_renew_date,
+            "expire_date": expire_date,
+            "days_to_expire": days_to_expire
         }
         return build_response(409, data=payload)
 
