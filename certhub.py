@@ -421,7 +421,7 @@ class Client():
         fmt: str | None,
         *,
         timeout: int, 
-        nagios: "Nagios" | None = None
+        nagios: "Nagios | None" = None
     ) -> "Client":
         settings = load_settings(ctx, fmt)
         
@@ -1094,15 +1094,15 @@ def resolve_cert_ids(client: "Client", *, permission: str, patterns: list[str], 
     cert_ids = [entry["id"] for entry in payload]
     
     if not cert_ids:
-        filters = []
+        data: dict[str, Any] = {
+            "msg": f"No certificate found allowed for '{permission}' action for the current identity",
+            "permission": permission,
+        }
         if patterns:
-            filters.append(f"pattern(s) '{', '.join(patterns)}'")
+            data["pattern"] = ", ".join(patterns)
         if cert_type and cert_type != "all":
-            filters.append(f"type '{cert_type}'")
-        suffix = f" matching {', '.join(filters)}" if filters else ""
-        raise typer.BadParameter(
-            f"No certificate allowed for '{permission}' found for the current identity{suffix}"
-        )
+            data["cert_type"] = cert_type
+        return CmdResult.from_dict(data, ExitCode.CRITICAL).render_and_exit()
     return cert_ids
 
 
