@@ -2,6 +2,7 @@ import os
 import subprocess
 import logging
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -23,7 +24,9 @@ class CertBot:
     exe_path: Path
     renew_before_days: int
     base_args: Sequence[str]
+    revoked_dir: Path
     cloudflare_dns_api_token: Optional[str] = None
+
 
     @classmethod
     def load(
@@ -38,6 +41,7 @@ class CertBot:
         work_dir = base_dir / "work"
         logs_dir = base_dir / "logs"
         conf_dir = base_dir / "config"
+        revoked_dir = base_dir / "revoked"
 
         base_args = [
             "--non-interactive",
@@ -60,6 +64,7 @@ class CertBot:
             exe_path = exe_path,
             renew_before_days = renew_before_days,
             base_args = base_args,
+            revoked_dir = revoked_dir,
             cloudflare_dns_api_token = cloudflare_dns_api_token
         )
     
@@ -106,6 +111,21 @@ class CertBot:
                 raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
     
         
+    def revoke(self, cert_name: str) -> None:
+        cmd = [
+            str(self.exe_path),
+            "revoke",
+            "--cert-path", str(self.get_cert_path(cert_name)),
+            "--delete-after-revoke",
+            *self.base_args
+        ]
+        log.debug(f"Certbot revoke command for '{cert_name}' certificate: {' '.join(cmd)}")
+
+        result = self._run_cmd(cmd)
+        if result.returncode != 0:
+            raise CertBotError(cert_name, return_code=result.returncode, cmd=cmd, output=result.stderr)
+
+
     def get_cert_path(self, cert_name: str) -> Path:
         return self.conf_dir / "live" / cert_name / "cert.pem"
 
@@ -116,6 +136,18 @@ class CertBot:
 
     def get_private_key_path(self, cert_name: str) -> Path:
         return self.conf_dir / "live" / cert_name / "privkey.pem"
+
+
+    def mark_revoked(self, cert_name: str) -> None:
+        self.revoked_dir.mkdir(parents=True, exist_ok=True)
+        (self.revoked_dir / cert_name).write_text(datetime.now(timezone.utc).isoformat(), encoding="UTF-8")
+
+    def is_revoked(self, cert_name: str) -> bool:
+        return (self.revoked_dir / cert_name).exists()
+
+    def clear_revoked(self, cert_name: str) -> None:
+        (self.revoked_dir / cert_name).unlink(missing_ok=True)
+
 
     @contextmanager
     def _dns_provider_args(self, dns_provider: DnsProvider) -> Iterator[list[str]]:
@@ -132,6 +164,7 @@ class CertBot:
                 yield [f"--{dns_provider.get_plugin()}", "--dns-cloudflare-credentials", f.name]
         else:
             yield [f"--{dns_provider.get_plugin()}"]
+
 
     def _run_cmd(
         self,

@@ -60,3 +60,20 @@ def test_secret_envs_missing_raises(monkeypatch):
     monkeypatch.delenv("CH_FAKE_SECRET__FILE", raising=False)
     with pytest.raises(ValidationError):
         Require.secret_envs(["CH_FAKE_SECRET"])
+
+
+def test_query_one_of_returns_value_when_allowed():
+    with app.test_request_context("/?type=static"):
+        assert v.query_one_of("type", default="all", allowed=["letsencrypt", "static", "all"]) == "static"
+
+
+def test_query_one_of_returns_default_when_absent():
+    with app.test_request_context("/"):
+        assert v.query_one_of("type", default="all", allowed=["letsencrypt", "static", "all"]) == "all"
+
+
+def test_query_one_of_rejects_disallowed():
+    with app.test_request_context("/?type=bogus"):
+        with pytest.raises(InvalidRequestError) as exc:
+            v.query_one_of("type", default="all", allowed=["letsencrypt", "static", "all"])
+        assert exc.value.code == 400

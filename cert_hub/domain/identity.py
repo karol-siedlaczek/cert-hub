@@ -5,7 +5,8 @@ import logging
 from hashlib import sha256
 from dataclasses import dataclass
 from typing import Any
-from cert_hub.domain.permission import Permission
+from cert_hub.domain.cert.cert import Cert
+from cert_hub.domain.permission.permission import Permission, PermissionAction
 from cert_hub.validation.require import Require
 
 log = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class Identity:
     hmac_hex: str
     allowed_cidrs: list[str]
     permissions: list[Permission]
+
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Identity":
@@ -47,6 +49,11 @@ class Identity:
             permissions.append(permission)
         
         return cls(identity_id, hmac_hex, allowed_cidrs, permissions)
+    
+    
+    def allows(self, cert: Cert, action: PermissionAction) -> bool:
+        log.debug(f"Perform permission check (cert='{cert.id}'; identity='{self.id}'; action='{action.value}')")        
+        return any(p.allows(cert, action) for p in self.permissions)
 
 
     def is_token_valid(self, hmac_key: bytes, token: str) -> bool:
@@ -54,8 +61,15 @@ class Identity:
         return hmac.compare_digest(token_hmac_hex, self.hmac_hex)
     
     
+    def has_global_action(self, action: PermissionAction) -> bool:
+        for permission in self.permissions:
+            if permission.scope == "*" and permission.action in (action, PermissionAction.ANY):
+                return True
+        return False
+
+
     def is_ip_allowed(self, ip_addr: str | None = None) -> bool:
-        log.debug(f"Perform ip address check (ip_addr='{ip_addr}', identity='{self}')")
+        log.debug(f"Perform ip address check (ip_addr='{ip_addr}', identity='{self.id}')")
         
         if not ip_addr:
             return False

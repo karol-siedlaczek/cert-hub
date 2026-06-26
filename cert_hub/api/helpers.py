@@ -3,21 +3,13 @@ from datetime import datetime, timezone
 from typing import Any
 from http import HTTPStatus
 from flask import Response, jsonify, request
-from cert_hub.domain.cert import Cert, CertStatus
+from cert_hub.api.validators import query_one_of
+from cert_hub.domain.cert.cert import Cert
+from cert_hub.domain.cert.cert_type import CertType
+from cert_hub.domain.cert.cert_status import CertStatus
 from cert_hub.domain.identity import Identity
-from cert_hub.conf.config import Config
-from cert_hub.exception.auth_exceptions import AuthTokenMissingException, AuthFailedException, AuthIpNotAllowedException
 
 log = logging.getLogger(__name__)
-
-
-@staticmethod
-def get_remote_ip() -> str | None:
-    if request.remote_addr:
-        return request.remote_addr
-    
-    xff = request.headers.get("X-Forwarded-For", "")
-    return xff.split(",")[0].strip() if xff else None
 
 
 def log_request(msg: str, *, identity: Identity | None = None, level: str = "info") -> None:
@@ -59,35 +51,55 @@ def build_response(
     return response
 
 
-def require_auth(remote_ip: str) -> Identity:
-    auth_header = request.headers.get("Authorization", None)
-    
-    if not auth_header or auth_header == "":
-        raise AuthTokenMissingException("Authorization header is missing or empty")
-    elif not auth_header.startswith("Bearer "):
-        raise AuthTokenMissingException("Authorization header does not start with 'Bearer '")
-    
-    token_raw = auth_header[len("Bearer "):].strip()
-
-    try:
-        identity_id, identity_token = token_raw.split(".", 1)
-        if not identity_id or not identity_token:
-            raise ValueError()
-    except ValueError:
-        raise AuthFailedException("Invalid token format, expected: 'Authorization: Bearer <id>.<token>'")
-    
-    conf = Config.get_from_global_context()
-    identity = next((i for i in conf.identities if i.id == identity_id), None)
-    
-    if identity is None:
-        raise AuthFailedException(f"Unknown identity '{identity_id}'")
-    if not identity.is_token_valid(conf.hmac_key, identity_token):
-        raise AuthFailedException(f"Invalid token for identity '{identity_id}'")
-    if not identity.is_ip_allowed(remote_ip):
-        raise AuthIpNotAllowedException(remote_ip)
-    
-    return identity
-
-
 def get_log_record(status: CertStatus, cert: Cert | str, msg: str) -> str:
     return f"cert_id='{cert.id if isinstance(cert, Cert) else cert}', status='{status.value}', msg='{msg}'"
+
+
+def filter_certs_by_type(certs: list[Cert], *, default: CertType = CertType.ALL) -> list[Cert]:
+    type_filter = query_one_of("type", default=default, allowed=CertType.values())
+    if type_filter == CertType.ALL:
+        return certs
+    return [c for c in certs if c.type.value == type_filter]
+
+
+def render_metrics(records: list[dict], build_info: dict) -> str:
+    def _escape_label(value: object) -> str:
+        return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    lines: list[str] = []
+
+    lines.append("# HELP certhub_build_info Build information.")
+    lines.append("# TYPE certhub_build_info gauge")
+    lines.append(
+        f'certhub_build_info{{version="{_escape_label(build_info.get("version", ""))}",'
+        f'git_sha="{_escape_label(build_info.get("git_sha", ""))}"}} 1'
+    )
+
+    lines.append("# HELP certhub_cert_expiry_timestamp_seconds Certificate expiry as a unix timestamp.")
+    lines.append("# TYPE certhub_cert_expiry_timestamp_seconds gauge")
+    for record in records:
+        if record.get("expiry_ts") is not None:
+            lines.append(
+                f'certhub_cert_expiry_timestamp_seconds{{id="{_escape_label(record["id"])}",'
+                f'type="{_escape_label(record["type"])}"}} {int(record["expiry_ts"])}'
+            )
+
+    lines.append("# HELP certhub_cert_days_to_expire Days until certificate expiry.")
+    lines.append("# TYPE certhub_cert_days_to_expire gauge")
+    for record in records:
+        if record.get("days_to_expire") is not None:
+            lines.append(
+                f'certhub_cert_days_to_expire{{id="{_escape_label(record["id"])}",'
+                f'type="{_escape_label(record["type"])}"}} {int(record["days_to_expire"])}'
+            )
+
+    lines.append("# HELP certhub_cert_status Current certificate status (value is always 1; the status is a label).")
+    lines.append("# TYPE certhub_cert_status gauge")
+    for record in records:
+        lines.append(
+            f'certhub_cert_status{{id="{_escape_label(record["id"])}",'
+            f'type="{_escape_label(record["type"])}",'
+            f'status="{_escape_label(record["status"])}"}} 1'
+        )
+
+    return "\n".join(lines) + "\n"

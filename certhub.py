@@ -3,12 +3,14 @@
 # Karol Siedlaczek 2026
 
 import os
+import sys
 import grp
 import pwd
 import re
 import json
 import shlex
 import shutil
+import tempfile
 import typer
 import hmac
 import hashlib
@@ -80,8 +82,47 @@ class Format(Enum):
             return Format(val)
         except ValueError:
             raise typer.BadParameter(f"Unknown format: {val}, must be one of: {(', ').join(Format.values())}")
-        
+
+
+class PemType(Enum):
+    CERT = "cert"
+    PRIV_KEY = "privkey"
+    CHAIN = "chain"
+    BUNDLE = "bundle"
     
+    @classmethod
+    def values(cls) -> list[str]:
+        return [item.value for item in cls]
+    
+    @classmethod
+    def default(cls) -> "PemType":
+        return PemType.BUNDLE
+    
+    @classmethod
+    def from_string(cls, val: str) -> "PemType":
+        try:
+            return PemType(val)
+        except ValueError:
+            raise typer.BadParameter(f"Unknown PEM type: {val}, must be one of: {(', ').join(PemType.values())}")
+    
+    
+class CertType(str, Enum):
+    LETSENCRYPT = "letsencrypt"
+    STATIC = "static"
+    ALL = "all"
+
+    @classmethod
+    def values(cls) -> list[str]:
+        return [item.value for item in cls]
+
+    @classmethod
+    def from_string(cls, val: str) -> "CertType":
+        try:
+            return cls(val)
+        except ValueError:
+            raise typer.BadParameter(f"Invalid --type '{val}', must be one of: {', '.join(cls.values())}")
+
+
 class Opt:
     @staticmethod
     def timeout(default: int = 10) -> Any:
@@ -116,6 +157,13 @@ class Opt:
         return typer.Option(
             None, "--force",
             help=help_text
+        )
+
+    @staticmethod
+    def type(default: str = "all") -> Any:
+        return typer.Option(
+            default, "--type",
+            help=f"Filter by certificate type: {', '.join(CertType.values())}"
         )
 
 
@@ -617,14 +665,17 @@ def cert_status(
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
     exclude_ok: bool = typer.Option(
-        None, "--exclude-ok", 
+        None, "--exclude-ok",
         help="Hide certificates with OK status"
-    )
+    ),
+    type: str = Opt.type("all"),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
+    cert_type = CertType.from_string(type)
     params = {
         **({"exclude_ok": "true"} if exclude_ok else {}),
-        **({"match": patterns} if patterns else {})
+        **({"match": patterns} if patterns else {}),
+        "type": cert_type.value,
     }
     response = client.request("GET", "/api/certs/status", params=params)
     
@@ -642,17 +693,15 @@ def cert_issue(
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
-    force: bool = Opt.force("Force reissue of certificate even if it already exists")
+    force: bool = Opt.force("Force reissue of certificate even if it already exists"),
+    type: str = Opt.type("letsencrypt"),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
-    params = {
-        **({"force": "true"} if force else {}),
-        **({"match": patterns} if patterns else {})
-    }
-    response = client.request("POST", "/api/certs/issue", params=params)
+    cert_type = CertType.from_string(type)
+    cert_ids = resolve_cert_ids(client, permission="issue", patterns=patterns, cert_type=cert_type.value)
     
-    result = CmdResult.from_response(response)
-    return result.render_and_exit(ctx.info_name, columns)
+    rows, exit_code = fanout_certs(client, cert_ids, "issue", force=force)
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
 
 
 @cert_app.command(name = "renew", help="Renew existing certificates for the current identity or selected pattern")
@@ -662,18 +711,72 @@ def cert_renew(
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
-    force: bool = Opt.force("Force certificate renew even if it does not need to be renewed")
+    force: bool = Opt.force("Force certificate renew even if it does not need to be renewed"),
+    type: str = Opt.type("letsencrypt"),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
-    params = {
-        **({"force": "true"} if force else {}),
-        **({"match": patterns} if patterns else {})
-    }
-    response = client.request("POST", "/api/certs/renew", params=params)
+    cert_type = CertType.from_string(type)
+    cert_ids = resolve_cert_ids(client, permission="renew", patterns=patterns, cert_type=cert_type.value)
     
-    result = CmdResult.from_response(response)
-    return result.render_and_exit(ctx.info_name, columns)
+    rows, exit_code = fanout_certs(client, cert_ids, "renew", force=force)
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
     
+
+@cert_app.command(name="revoke", help="Revoke certificates for the current identity or selected pattern (irreversible)")
+def cert_revoke(
+    ctx: typer.Context,
+    timeout: int = Opt.timeout(360),
+    format: str = Opt.format(),
+    patterns: list[str] = Opt.patterns(),
+    columns: list[str] = Opt.columns(),
+    assume_yes: bool = typer.Option(
+        False, "--yes-i-really-mean-it",
+        help="Skip the interactive confirmation prompt (for automation)"
+    )
+) -> None:
+    client = Client.init(ctx, format, timeout=timeout)
+    cert_ids = resolve_cert_ids(client, permission="revoke", patterns=patterns)
+
+    typer.echo("The following certificates will be REVOKED (irreversible):")
+    for cert_id in cert_ids:
+        typer.echo(f"  - {cert_id}")
+
+    if not assume_yes:
+        if not sys.stdin.isatty():
+            raise typer.BadParameter(
+                'Refusing to revoke without confirmation in a non-interactive shell; pass --yes-i-really-mean-it'
+            )
+        confirmation = typer.prompt('Type "Yes i really mean it" to proceed')
+        if confirmation != "Yes i really mean it":
+            typer.echo("Aborted, no certificates were revoked.")
+            raise typer.Exit(code=1)
+
+    rows, exit_code = fanout_certs(client, cert_ids, "revoke")
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
+
+
+@cert_app.command(name = "pem", help="Print raw PEM material (bundle, cert, chain or privkey) for a single certificate")
+def cert_pem(
+    ctx: typer.Context,
+    cert_id: str = typer.Argument(..., help="Certificate id to fetch PEM material for"),
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    type: str = typer.Option(
+        PemType.default().value, "--type", "-T",
+        help=f"PEM material to fetch. Choices: {', '.join(PemType.values())}"
+    ),
+) -> None:
+    pem_type = PemType.from_string(type)
+    client = Client.init(ctx, format, timeout=timeout)
+    response = client.request("GET", f"/api/certs/{cert_id}/pem", params={"type": pem_type.value})
+
+    if response.ok:
+        typer.echo(response.text, nl=False)
+        raise typer.Exit(ExitCode.OK.value)
+
+    # Error responses are JSON envelopes (e.g. 409 not issued, 403, 404) — render them.
+    CmdResult.from_response(response).render_and_exit(ctx.info_name)
+
 
 @cert_app.command(name = "list", help="List certificates available for the current identity or selected pattern")
 def cert_list(
@@ -685,11 +788,14 @@ def cert_list(
     long: bool = typer.Option(
         None, "-l", "--long",
         help="Add to output sensitive data like certificate, chain and private key"
-    )
+    ),
+    type: str = Opt.type("all"),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
+    cert_type = CertType.from_string(type)
     params = {
-        **({"match": patterns} if patterns else {})
+        **({"match": patterns} if patterns else {}),
+        "type": cert_type.value,
     }
     response = client.request("GET", "/api/certs", params=params)
     sensitive_columns = ("certificate", "chain", "private_key")
@@ -713,16 +819,24 @@ def cert_update_in_place(
         ..., "--dest-dir", "-d",
         help="Directory containing certificate files to check and update"
     ),
+    pem: list[str] = typer.Option(
+        [PemType.default().value], "--pem", "-P",
+        help=f"PEM file type(s) to produce; repeatable. Files are named <prefix>_<type>.pem. Choices: {', '.join(PemType.values())}"
+    ),
     post_hook: str = typer.Option(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expiring or expired certificate"
     ),
+    omit_post_hook_on_revoke: bool = typer.Option(
+        False, "--omit-post-hook-on-revoke",
+        help="Do not let revoked-cert cleanup trigger --post-hook (cleanup still happens and is reported)"
+    ),
     owner: str = typer.Option(
-        None, "--owner",
+        None, "--owner", "-O",
         help="Owner of the certificate file (username or UID)"
     ),
     group: str = typer.Option(
-        None, "--group",
+        None, "--group", "-G",
         help="Group of the certificate file (group name or GID)"
     ),
     chmod: str = typer.Option(
@@ -732,23 +846,24 @@ def cert_update_in_place(
     nagios_service: str = typer.Option(
         None, '--nagios-service',
         help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
-    )
+    ),
+    type: str = Opt.type("all"),
 ) -> None:
     @dataclass
     class CertUpdateResult:
         cert: str
         code: ExitCode
-        pem_file: Path | None
+        pem_files: list[Path]
         remote_expire_date: datetime | None
         local_expire_date: datetime | None
         updated: bool
         msg: str
-        
+
         def to_serializable(self) -> dict:
             return {
                 "id": self.cert,
                 "status": self.code.name,
-                "pem_file": str(self.pem_file),
+                "pem_files": [str(p) for p in self.pem_files],
                 "local_expire_date": datetime.strftime(self.local_expire_date, DATE_FMT) if self.local_expire_date else None,
                 "remote_expire_date": datetime.strftime(self.remote_expire_date, DATE_FMT) if self.remote_expire_date else None,
                 "updated": self.updated,
@@ -759,6 +874,8 @@ def cert_update_in_place(
         chmod_mode = int(chmod, 8)
     except ValueError:
         raise typer.BadParameter(f"Invalid --chmod value '{chmod}', must be an octal number (e.g. 600, 640, 644)")
+    
+    pem_types = parse_pem_types(pem)
     settings = load_settings(ctx, format)
     nagios = Nagios.from_options(
         settings.nsca_server,
@@ -773,10 +890,12 @@ def cert_update_in_place(
     if not certs_dir.is_dir():
         raise typer.BadParameter(f"Value provided by -d/--dest-dir is not a directory: {certs_dir}")
     
+    cert_type = CertType.from_string(type)
     params = {
-        **({"match": patterns} if patterns else {})
+        **({"match": patterns} if patterns else {}),
+        "type": cert_type.value,
     }
-    
+
     client = Client.init(ctx, format, timeout=timeout, nagios=nagios)
     response = client.request("GET", "/api/certs", params=params)
     result = CmdResult.from_response(response)
@@ -790,159 +909,136 @@ def cert_update_in_place(
 
     for cert in result.data:
         cert_id = cert.get("id")
-        
-        try:
-            pem_filename = str(dict(cert.get("custom_attrs"))["pem_filename"])
-        except (TypeError, KeyError):
-            results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.UNKNOWN,
-                pem_file=None,
-                remote_expire_date=None,
-                local_expire_date=None,
-                updated=False,
-                msg="Missing custom attribute 'pem_filename' on server side"
-            ))
-            continue
-        
-        if not bool(re.compile(PEM_FILENAME_PATTERN).fullmatch(pem_filename)):
+        prefix = resolve_pem_prefix(cert)
+
+        if not re.compile(PEM_FILENAME_PATTERN).fullmatch(prefix):
             results.append(CertUpdateResult(
                 cert=cert_id,
                 code=ExitCode.CRITICAL,
-                pem_file=None,
+                pem_files=[],
                 remote_expire_date=None,
                 local_expire_date=None,
                 updated=False,
-                msg=f"Invalid custom attribute 'pem_filename' value on server side, needs to match pattern: {PEM_FILENAME_PATTERN}"
+                msg=f"Invalid file name prefix '{prefix}' (from custom_attr 'pem_prefix' or cert id), needs to match pattern: {PEM_FILENAME_PATTERN}"
             ))
             continue
-            
-        if not pem_filename.endswith(".pem"):
-            pem_filename += ".pem"
-        
-        pem_file = certs_dir / pem_filename
-        
+
+        pem_files = [certs_dir / f"{prefix}_{pem_type.value}.pem" for pem_type in pem_types]
+        fields = required_server_fields(pem_types)
+
         certificate = cert.get("certificate")
-        if not certificate:
+        chain = cert.get("chain")
+        private_key = cert.get("private_key")
+
+        if cert.get("status") == "REVOKED":
+            removed = []
+            for pem_file in pem_files:
+                if pem_file.exists():
+                    pem_file.unlink()
+                    removed.append(pem_file.name)
             results.append(CertUpdateResult(
                 cert=cert_id,
-                code=ExitCode.WARNING,
-                pem_file=pem_file,
+                code=ExitCode.OK,
+                pem_files=pem_files,
                 remote_expire_date=None,
                 local_expire_date=None,
-                updated=False,
+                updated=bool(removed) and not omit_post_hook_on_revoke,
+                msg=(f"Revoked on server; removed local files: {', '.join(removed)}" if removed else "Revoked on server; no local files to remove")
+            ))
+            continue
+
+        if "certificate" in fields and not certificate:
+            results.append(CertUpdateResult(
+                cert=cert_id, code=ExitCode.WARNING, pem_files=pem_files,
+                remote_expire_date=None, local_expire_date=None, updated=False,
                 msg="Not issued on server side"
             ))
             continue
-        
-        expire_date_str = cert.get("expire_date")
-        if not expire_date_str:
+
+        if "private_key" in fields and not private_key:
             results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.CRITICAL,
-                pem_file=pem_file,
-                remote_expire_date=None,
-                local_expire_date=None,
-                updated=False,
-                msg="Expire date is missing on server side"
-            ))
-            continue
-        
-        try:
-            expire_date = datetime.strptime(expire_date_str, DATE_FMT).replace(tzinfo=timezone.utc)
-        except ValueError as e:
-            results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.CRITICAL,
-                pem_file=pem_file,
-                remote_expire_date=None,
-                local_expire_date=None,
-                updated=False,
-                msg=f"Failed to parse expire date from server side: {safe_str(e)}"
-            ))
-            continue
-            
-        chain = cert.get("chain")
-        if not chain:
-            results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.CRITICAL,
-                pem_file=pem_file,
-                remote_expire_date=expire_date,
-                local_expire_date=None,
-                updated=False,
-                msg="Chain is missing on server side"
-            ))
-            continue
-        
-        private_key = cert.get("private_key")
-        if not private_key:
-            results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.CRITICAL,
-                pem_file=pem_file,
-                remote_expire_date=expire_date,
-                local_expire_date=None,
-                updated=False,
+                cert=cert_id, code=ExitCode.CRITICAL, pem_files=pem_files,
+                remote_expire_date=None, local_expire_date=None, updated=False,
                 msg="Private key is missing on server side"
             ))
             continue
-        
-        pem_parts = [part.strip() for part in [certificate, chain, private_key] if part]
-        pem_bundle = "\n".join(pem_parts) + "\n"
-        is_pem_file_exists = pem_file.exists()
+
+        if "chain" in fields and not chain:
+            results.append(CertUpdateResult(
+                cert=cert_id, code=ExitCode.CRITICAL, pem_files=pem_files,
+                remote_expire_date=None, local_expire_date=None, updated=False,
+                msg="Chain is missing on server side"
+            ))
+            continue
+
+        expire_date = None
+        if "expire_date" in fields:
+            expire_date_str = cert.get("expire_date")
+            if not expire_date_str:
+                results.append(CertUpdateResult(
+                    cert=cert_id, code=ExitCode.CRITICAL, pem_files=pem_files,
+                    remote_expire_date=None, local_expire_date=None, updated=False,
+                    msg="Expire date is missing on server side"
+                ))
+                continue
+            try:
+                expire_date = datetime.strptime(expire_date_str, DATE_FMT).replace(tzinfo=timezone.utc)
+            except ValueError as e:
+                results.append(CertUpdateResult(
+                    cert=cert_id, code=ExitCode.CRITICAL, pem_files=pem_files,
+                    remote_expire_date=None, local_expire_date=None, updated=False,
+                    msg=f"Failed to parse expire date from server side: {safe_str(e)}"
+                ))
+                continue
+
+        ref_type = expiry_reference_type(pem_types)
+        existed_before = any(f.exists() for f in pem_files)
+        need_update = any(not f.exists() for f in pem_files)
         local_expire_date = None
-        
-        if is_pem_file_exists:
-            try:
-                local_expire_date = get_cert_expire_date(pem_file)
-            except Exception as e:
-                results.append(CertUpdateResult(
-                    cert=cert_id,
-                    code=ExitCode.CRITICAL,
-                    pem_file=pem_file,
-                    remote_expire_date=expire_date,
-                    local_expire_date=None,
-                    updated=False,
-                    msg=safe_str(str(e))
-                ))
-                continue
-            
-            if expire_date <= local_expire_date:
-                results.append(CertUpdateResult(
-                    cert=cert_id,
-                    code=ExitCode.OK,
-                    pem_file=pem_file,
-                    remote_expire_date=expire_date,
-                    local_expire_date=local_expire_date,
-                    updated=False,
-                    msg="Up to date"
-                ))
-                continue
-            
-        # Add or update local certificate
 
-        pem_file.write_text(pem_bundle, encoding="UTF-8")
-        os.chmod(pem_file, chmod_mode)
+        if ref_type is not None:
+            ref_file = certs_dir / f"{prefix}_{ref_type.value}.pem"
+            if ref_file.exists():
+                try:
+                    local_expire_date = get_cert_expire_date(ref_file)
+                except Exception as e:
+                    results.append(CertUpdateResult(
+                        cert=cert_id, code=ExitCode.CRITICAL, pem_files=pem_files,
+                        remote_expire_date=expire_date, local_expire_date=None, updated=False,
+                        msg=safe_str(str(e))
+                    ))
+                    continue
+                if expire_date > local_expire_date:
+                    need_update = True
 
-        if owner is not None or group is not None:
+        if not need_update:
+            results.append(CertUpdateResult(
+                cert=cert_id, code=ExitCode.OK, pem_files=pem_files,
+                remote_expire_date=expire_date, local_expire_date=local_expire_date, updated=False,
+                msg="Up to date"
+            ))
+            continue
+
+        # Add or update local certificate files
+        for pem_type, pem_file in zip(pem_types, pem_files):
+            content = pem_content_for(pem_type, certificate, chain, private_key)
+            _write_secure(pem_file, content, mode=chmod_mode, owner=owner, group=group)
+
+        # Report the freshly written cert's expiry: keep the pre-write local date when
+        # we had one (an existing cert being replaced), otherwise read it back from the
+        # just-written reference file. With no cert-bearing reference (e.g. only privkey) it stays None.
+        if local_expire_date is None and ref_type is not None:
             try:
-                shutil.chown(pem_file, user=owner, group=group)
-            except LookupError:
-                uid = pwd.getpwnam(owner).pw_uid if owner is not None else -1
-                gid = int(group) if group is not None and str(group).isdigit() else (grp.getgrnam(group).gr_gid if group is not None else -1)
-                os.lchown(pem_file, uid, gid)
+                local_expire_date = get_cert_expire_date(certs_dir / f"{prefix}_{ref_type.value}.pem")
+            except Exception:
+                local_expire_date = None
 
         results.append(CertUpdateResult(
-            cert=cert_id,
-            code=ExitCode.OK,
-            pem_file=pem_file,
-            remote_expire_date=expire_date,
-            local_expire_date=local_expire_date if local_expire_date is not None else get_cert_expire_date(pem_file),
-            updated=True,
-            msg="Updated" if is_pem_file_exists else "Added"
+            cert=cert_id, code=ExitCode.OK, pem_files=pem_files,
+            remote_expire_date=expire_date, local_expire_date=local_expire_date, updated=True,
+            msg="Updated" if existed_before else "Added"
         ))
-    
+
     is_any_updated = any(r.updated for r in results)        
     
     if is_any_updated and post_hook:
@@ -980,6 +1076,66 @@ def cert_update_in_place(
     
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+
+def resolve_cert_ids(client: "Client", *, permission: str, patterns: list[str], cert_type: str | None = None) -> list[str]:
+    params: dict[str, Any] = {"permission": permission}
+    
+    if patterns:
+        params["match"] = patterns
+    if cert_type and cert_type != "all":
+        params["type"] = cert_type
+        
+    response = client.request("GET", "/api/certs/catalog", params=params)
+    if not response.ok:
+        CmdResult.from_response(response).render_and_exit()
+        
+    payload = response.json().get("data", [])
+    cert_ids = [entry["id"] for entry in payload]
+    
+    if not cert_ids:
+        filters = []
+        if patterns:
+            filters.append(f"pattern(s) '{', '.join(patterns)}'")
+        if cert_type and cert_type != "all":
+            filters.append(f"type '{cert_type}'")
+        suffix = f" matching {', '.join(filters)}" if filters else ""
+        raise typer.BadParameter(
+            f"No certificate allowed for '{permission}' found for the current identity{suffix}"
+        )
+    return cert_ids
+
+
+def fanout_certs(client: "Client", cert_ids: list[str], action: str, *, force: bool = False) -> tuple[list[dict], ExitCode]:
+    rows: list[dict] = []
+    exit_code = ExitCode.OK
+    
+    for cert_id in cert_ids:
+        params = {"force": "true"} if force else {}
+        response = client.request("POST", f"/api/certs/{cert_id}/{action}", params=params)
+        rows.append(_action_row(cert_id, response))
+        # 409 is an expected per-cert condition (already issued, not yet renewable,
+        # not supported, revoke of a not-issued cert) -> not a failure. Any other
+        # non-2xx (400/403/404/5xx) is a real error and fails the whole command.
+        if not response.ok and response.status_code != 409:
+            exit_code = ExitCode.CRITICAL
+    return rows, exit_code
+
+
+def _action_row(cert_id: str, response: requests.Response) -> dict:
+    # Per-cert action endpoints always carry the result row under "data",
+    # whether the action succeeded (200) or failed with a CertException (409).
+    try:
+        body = response.json()
+    except ValueError:
+        return {"id": cert_id, "msg": response.text}
+
+    if isinstance(body, dict) and isinstance(body.get("data"), dict):
+        return body["data"]
+
+    # Envelope without a per-cert data block (e.g. 401/403/500): surface what we can.
+    message = body.get("message") if isinstance(body, dict) else str(body)
+    return {"id": cert_id, "msg": message}
 
 
 def get_ctx_settings() -> Settings:
@@ -1103,6 +1259,91 @@ def get_cert_expire_date(cert_file: Path) -> datetime:
     if expire_date.tzinfo is None:
         expire_date = expire_date.replace(tzinfo=timezone.utc)
     return expire_date.astimezone(timezone.utc)
+
+
+def parse_pem_types(values: list[str]) -> list["PemType"]:
+    result: list[PemType] = []
+    for value in values:
+        pem_type = PemType.from_string(value)
+        if pem_type not in result:
+            result.append(pem_type)
+    return result
+
+
+def resolve_pem_prefix(cert: dict) -> str:
+    custom_attrs = cert.get("custom_attrs")
+    if isinstance(custom_attrs, dict) and custom_attrs.get("pem_prefix"):
+        return str(custom_attrs["pem_prefix"])
+    return str(cert.get("id"))
+
+
+def pem_content_for(
+    pem_type: "PemType",
+    certificate: str | None,
+    chain: str | None,
+    private_key: str | None,
+) -> str:
+    if pem_type == PemType.CERT:
+        parts = [certificate]
+    elif pem_type == PemType.CHAIN:
+        parts = [chain]
+    elif pem_type == PemType.PRIV_KEY:
+        parts = [private_key]
+    else:  # PemType.BUNDLE
+        parts = [certificate, chain, private_key]
+    parts = [part.strip() for part in parts if part]
+    return "\n".join(parts) + "\n"
+
+
+def required_server_fields(pem_types: list["PemType"]) -> set[str]:
+    fields: set[str] = set()
+    for pem_type in pem_types:
+        if pem_type in (PemType.CERT, PemType.BUNDLE):
+            fields.add("certificate")
+        if pem_type in (PemType.PRIV_KEY, PemType.BUNDLE):
+            fields.add("private_key")
+        if pem_type == PemType.CHAIN:
+            fields.add("chain")
+    if any(pem_type in (PemType.BUNDLE, PemType.CERT) for pem_type in pem_types):
+        fields.add("expire_date")
+    return fields
+
+
+def expiry_reference_type(pem_types: list["PemType"]) -> "PemType | None":
+    if PemType.BUNDLE in pem_types:
+        return PemType.BUNDLE
+    if PemType.CERT in pem_types:
+        return PemType.CERT
+    return None
+
+
+def _chown(path: Path, owner: str | None, group: str | None) -> None:
+    if owner is None and group is None:
+        return
+    try:
+        shutil.chown(path, user=owner, group=group)
+    except LookupError:
+        uid = pwd.getpwnam(owner).pw_uid if owner is not None else -1
+        gid = int(group) if group is not None and str(group).isdigit() else (grp.getgrnam(group).gr_gid if group is not None else -1)
+        os.lchown(path, uid, gid)
+
+
+def _write_secure(path: Path, content: str, *, mode: int, owner: str | None, group: str | None) -> None:
+    # Write atomically through a same-dir temp file created at 0600, then rename into
+    # place. This guarantees a private key is never briefly world-readable (the old
+    # write_text+chmod left a window) and that consumers (e.g. an nginx reload from a
+    # post-hook) never observe a half-written file. os.replace is atomic within a dir.
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="UTF-8") as f:
+            f.write(content)
+        os.chmod(tmp, mode)
+        _chown(tmp, owner, group)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def safe_str(x: object) -> str:

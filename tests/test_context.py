@@ -5,13 +5,8 @@ from dataclasses import dataclass
 
 from cert_hub.api.context import Context
 from cert_hub.conf.config import Config
-from cert_hub.domain.permission import PermissionAction
-from cert_hub.exception.api_exceptions import (
-    InvalidRequestError,
-    ResourceNotFound,
-    PermissionDenied,
-)
-
+from cert_hub.domain.permission.permission_action import PermissionAction
+from cert_hub.exception.api_exceptions import InvalidRequestError, ResourceNotFound, PermissionDenied
 
 @dataclass
 class FakeCert:
@@ -19,12 +14,18 @@ class FakeCert:
     id: str
     allowed: frozenset = frozenset()
 
-    def has_permission(self, identity, action: PermissionAction) -> bool:
-        return action in self.allowed
+
+@dataclass
+class FakeIdentity:
+    """Stand-in for Identity: authorization lives here via allows(cert, action)."""
+    id: str = "tester"
+
+    def allows(self, cert: FakeCert, action: PermissionAction) -> bool:
+        return action in cert.allowed
 
 
 def _identity(ident_id="tester"):
-    return SimpleNamespace(id=ident_id)
+    return FakeIdentity(id=ident_id)
 
 
 def _ctx():
@@ -64,42 +65,82 @@ def test_match_certs_invalid_regex_raises_invalid_request():
     assert exc.value.code == 400
 
 
-# ── resolve_scope (matching + authorization → 200/403/404) ─────────────────────
-def test_resolve_scope_returns_only_authorized(monkeypatch):
+# ── resolve_certs (matching + authorization → 200/403/404) ─────────────────────
+def test_resolve_certs_returns_only_authorized(monkeypatch):
     certs = [
         FakeCert("a.example", allowed=frozenset({PermissionAction.READ})),
         FakeCert("b.example", allowed=frozenset()),  # matched but not authorized
     ]
     _use_certs(monkeypatch, certs)
-    result = _ctx().resolve_scope(["*"], PermissionAction.READ)
+    result = _ctx().resolve_certs(["*"], PermissionAction.READ)
     assert [c.id for c in result] == ["a.example"]
 
 
-def test_resolve_scope_no_matching_cert_raises_not_found(monkeypatch):
+def test_resolve_certs_no_matching_cert_raises_not_found(monkeypatch):
     _use_certs(monkeypatch, [FakeCert("a.example")])
     with pytest.raises(ResourceNotFound) as exc:
-        _ctx().resolve_scope(["ghost.zzz"], PermissionAction.READ)
+        _ctx().resolve_certs(["ghost.zzz"], PermissionAction.READ)
     assert exc.value.code == 404
 
 
-def test_resolve_scope_matched_but_unauthorized_raises_forbidden(monkeypatch):
+def test_resolve_certs_matched_but_unauthorized_raises_forbidden(monkeypatch):
     # cert exists for the scope, but identity has no READ permission on it → 403, not 404
     _use_certs(monkeypatch, [FakeCert("a.example", allowed=frozenset())])
     with pytest.raises(PermissionDenied) as exc:
-        _ctx().resolve_scope(["a.example"], PermissionAction.READ)
+        _ctx().resolve_certs(["a.example"], PermissionAction.READ)
     assert exc.value.code == 403
 
 
-def test_resolve_scope_star_without_permission_raises_forbidden(monkeypatch):
+def test_resolve_certs_star_without_permission_raises_forbidden(monkeypatch):
     # "*" matches all certs, but none grant the action → 403 (per design decision)
     _use_certs(monkeypatch, [FakeCert("a.example"), FakeCert("b.example")])
     with pytest.raises(PermissionDenied) as exc:
-        _ctx().resolve_scope(["*"], PermissionAction.ISSUE)
+        _ctx().resolve_certs(["*"], PermissionAction.ISSUE)
     assert exc.value.code == 403
 
 
-def test_resolve_scope_accepts_single_string_scope(monkeypatch):
+def test_resolve_certs_accepts_single_string_scope(monkeypatch):
     # a bare str must be treated as one scope, not exploded into characters
     _use_certs(monkeypatch, [FakeCert("a.example", allowed=frozenset({PermissionAction.READ}))])
-    result = _ctx().resolve_scope("a.example", PermissionAction.READ)
+    result = _ctx().resolve_certs("a.example", PermissionAction.READ)
     assert [c.id for c in result] == ["a.example"]
+
+
+# ── resolve_cert (exact id, never regex → 200/403/404) ─────────────────────────
+def test_resolve_cert_returns_exact_authorized(monkeypatch):
+    certs = [
+        FakeCert("a.example", allowed=frozenset({PermissionAction.ISSUE})),
+        FakeCert("b.example", allowed=frozenset({PermissionAction.ISSUE})),
+    ]
+    _use_certs(monkeypatch, certs)
+    cert = _ctx().resolve_cert("b.example", PermissionAction.ISSUE)
+    assert cert.id == "b.example"
+
+
+def test_resolve_cert_unknown_id_raises_not_found(monkeypatch):
+    _use_certs(monkeypatch, [FakeCert("a.example", allowed=frozenset({PermissionAction.ISSUE}))])
+    with pytest.raises(ResourceNotFound) as exc:
+        _ctx().resolve_cert("ghost.zzz", PermissionAction.ISSUE)
+    assert exc.value.code == 404
+
+
+def test_resolve_cert_existing_but_unauthorized_raises_forbidden(monkeypatch):
+    _use_certs(monkeypatch, [FakeCert("a.example", allowed=frozenset())])
+    with pytest.raises(PermissionDenied) as exc:
+        _ctx().resolve_cert("a.example", PermissionAction.ISSUE)
+    assert exc.value.code == 403
+
+
+def test_resolve_cert_does_not_regex_match(monkeypatch):
+    # 'web.api' must NOT be interpreted as a regex matching 'webXapi'; it has no
+    # exact id → 404. This is the safety guarantee for destructive per-cert actions.
+    _use_certs(monkeypatch, [FakeCert("webXapi", allowed=frozenset({PermissionAction.REVOKE}))])
+    with pytest.raises(ResourceNotFound):
+        _ctx().resolve_cert("web.api", PermissionAction.REVOKE)
+
+
+def test_resolve_cert_matches_id_with_regex_metachars(monkeypatch):
+    # an id that contains regex metacharacters resolves by its literal value
+    _use_certs(monkeypatch, [FakeCert("web.api", allowed=frozenset({PermissionAction.REVOKE}))])
+    cert = _ctx().resolve_cert("web.api", PermissionAction.REVOKE)
+    assert cert.id == "web.api"

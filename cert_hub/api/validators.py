@@ -20,7 +20,7 @@ def query_list(
     
     if not vals:
         if required:
-            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name, "example": f"?{name}=val_1&{name}=val_2" })
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name, "example": f"?{name}=val_1&{name}=val_2"})
         elif default:
             return default
         else:
@@ -35,14 +35,14 @@ def query_list(
 def query_str(
     name: str, 
     *, 
-    default: str,
+    default: str = None,
     required: bool = False
 ) -> str | None:
     val = request.args.get(name)
     
     if val is None:
         if required:
-            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name})
         elif default:
             return default
         else:
@@ -51,21 +51,38 @@ def query_str(
     return str(val).strip()
 
 
+def query_one_of(
+    name: str,
+    *,
+    default: str,
+    allowed: list[str],
+    required: bool = False
+) -> str:
+    val = request.args.get(name)
+
+    if val is None or val.strip() == "":
+        if required:
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name, "allowed_choices": allowed})
+        return default
+
+    val = val.strip()
+    if val not in allowed:
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "allowed_choices": allowed})
+    return val
+
+
 def query_bool(
     name: str,
     *,
     default: bool = None,
     required: bool = False
-) -> bool:
+) -> bool | None:
     val = request.args.get(name)
     
     if val is None:
         if required:
-            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
-        elif default:
-            return default
-        else:
-            return False
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name})
+        return default
     
     true_values = ["1", "true", "True", "yes", "Yes", ""]
     false_values = ["0", "false", "False", "no", "No"]
@@ -75,7 +92,7 @@ def query_bool(
     elif val in false_values:
         return False
     else:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "bool", "allowed_choices": true_values + false_values })
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "expected": "bool", "allowed_choices": true_values + false_values})
     
 
 def query_int(
@@ -90,7 +107,7 @@ def query_int(
     
     if raw_val is None or raw_val == "":
         if required:
-            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name})
         elif default:
             return default
         else:
@@ -99,12 +116,12 @@ def query_int(
     try:
         val = int(raw_val)
     except ValueError:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "integer" })
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "expected": "integer"})
     
     if min_val is not None and val < min_val:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "min": min_val })
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "min": min_val})
     if max_val is not None and val > max_val:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "max": max_val })
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "max": max_val})
     
     return val
 
@@ -119,7 +136,7 @@ def query_date(
 
     if raw_val is None or raw_val.strip() == "":
         if required:
-            raise InvalidRequestError("Missing required query parameter", detail={ "parameter": name })
+            raise InvalidRequestError("Missing required query parameter", detail={"parameter": name})
         elif default:
             return default
         else:
@@ -128,7 +145,7 @@ def query_date(
     try:
         return datetime.fromisoformat(raw_val.strip())
     except ValueError:
-        raise InvalidRequestError("Invalid query parameter", detail={ "parameter": name, "expected": "ISO 8601 date/datetime", "example": "2026-06-30 or 2026-06-30T12:00:00" })
+        raise InvalidRequestError("Invalid query parameter", detail={"parameter": name, "expected": "ISO 8601 date/datetime", "example": "2026-06-30 or 2026-06-30T12:00:00"})
 
 
 def json_body(
@@ -140,14 +157,14 @@ def json_body(
     
     if data is None:
         if required:
-            raise InvalidRequestError("Missing JSON body", detail={ "expected": "application/json" })
+            raise InvalidRequestError("Missing JSON body", detail={"expected": "application/json"})
         if default:
             return default
         else:
             return {}
     
     if not isinstance(data, dict):
-        raise InvalidRequestError("Invalid JSON body", detail={ "expected": "JSON object" })
+        raise InvalidRequestError("Invalid JSON body", detail={"expected": "JSON object"})
     
     return data
 
@@ -161,7 +178,7 @@ def json_body_field(
 ) -> T | Any | None:
     if name not in data or data[name] in (None, ""):
         if required:
-            raise InvalidRequestError("Missing required JSON field in body", detail={ "field": name })
+            raise InvalidRequestError("Missing required JSON field in body", detail={"field": name})
         return None
     
     val: Any = data[name]
@@ -172,5 +189,5 @@ def json_body_field(
         return cast_fn(val)
     except Exception:
         expected_type = getattr(cast_fn, "__name__", "value")
-        raise InvalidRequestError("Invalid JSON field in body", detail={ "field": name, "expected": expected_type })
+        raise InvalidRequestError("Invalid JSON field in body", detail={"field": name, "expected": expected_type})
 

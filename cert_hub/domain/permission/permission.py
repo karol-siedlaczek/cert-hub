@@ -1,24 +1,15 @@
 import re
-from enum import Enum
 from dataclasses import dataclass
+from cert_hub.domain.cert.cert import Cert
 from cert_hub.validation.require import Require
+from cert_hub.domain.permission.permission_action import PermissionAction
 
-class PermissionAction(Enum):
-    ANY = "*"
-    READ = "read"
-    ISSUE = "issue"
-    RENEW = "renew"
-    STATUS = "status"
-    
-    @classmethod
-    def values(cls) -> list[str]:
-        return [item.value for item in cls]
-    
     
 @dataclass(frozen=True)
 class Permission:    
     scope: str
     action: PermissionAction
+  
     
     @classmethod
     def from_string(cls, index: int, permission: str) -> "Permission":
@@ -41,3 +32,15 @@ class Permission:
         
         return cls(scope, PermissionAction(action_raw))
     
+    
+    def allows(self, cert: Cert, action: PermissionAction) -> bool:
+        if self.action != PermissionAction.ANY and self.action != action:
+            return False
+
+        if self.scope == "*" or self.scope == cert.id:
+            return True
+
+        try:
+            return re.fullmatch(self.scope, cert.id) is not None
+        except re.error:
+            return False

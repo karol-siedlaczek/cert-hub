@@ -3,10 +3,11 @@ import importlib.util
 from pathlib import Path
 from flask import Flask, Response
 from werkzeug.exceptions import MethodNotAllowed, NotFound
+from werkzeug.middleware.proxy_fix import ProxyFix
 from cert_hub.exception.auth_exceptions import AuthException, AuthFailedException
 from cert_hub.exception.api_exceptions import ApiError
 from cert_hub.exception.validator_exceptions import ValidationError
-from cert_hub.domain.cert_bot import CertBot
+from cert_hub.domain.cert.cert_bot import CertBot
 from cert_hub.conf.config import Config
 from cert_hub.api.routes import api as api_blueprint
 from cert_hub.api.helpers import build_response, log_request
@@ -28,7 +29,13 @@ def create_app() -> Flask:
     app.extensions["config"] = config
     app.extensions["certbot"] = certbot
     app.json.sort_keys = False
-    
+
+    # Behind a reverse proxy, request.remote_addr is the proxy unless we trust
+    # X-Forwarded-For. ProxyFix trusts only the TRUSTED_PROXY_HOPS rightmost XFF
+    # entries (spoof-safe). Default 0 leaves remote_addr untouched (direct connect).
+    if config.trusted_proxy_hops > 0:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=config.trusted_proxy_hops)
+
     check_packages()
     setup_paths(config)
     setup_logging(config)
@@ -45,7 +52,7 @@ def check_packages() -> None:
 
 
 def setup_paths(config: Config) -> None:
-    dir_params = ["logs_dir", "certbot_dir"]
+    dir_params = ["logs_dir", "certbot_dir", "static_certs_dir"]
     file_params = ["conf_file"]
     
     for param in dir_params:
@@ -88,32 +95,38 @@ def setup_error_handlers(app: Flask) -> None:
         log_request(e, level="warning")
         return build_response(404, msg="Resource not found")
     
+    
     @app.errorhandler(405)
     def handle_method_not_allowed(e: MethodNotAllowed) -> Response:
         log_request(e, level="warning")
         return build_response(405, msg=f"Method not allowed, valid methods are: {', '.join(e.valid_methods)}")
+
 
     @app.errorhandler(ValidationError)
     def handle_validation_error(e: ValidationError) -> Response:
         log_request(f"ValidationError: {e}", level="warning")
         return build_response(400, msg="Invalid request", detail=str(e))
 
+
     @app.errorhandler(AuthException)
     def handle_auth_exception(e: AuthException) -> Response:
         log_request(f"{type(e).__name__}: {e.msg}, details: {e.detail}", level="warning")
         return build_response(e.code, msg=e.msg, detail=None if isinstance(e, AuthFailedException) else e.detail)
+    
     
     @app.errorhandler(ApiError)
     def handle_api_error(e: ApiError) -> Response:
         log_request(f"{type(e).__name__}: {e.msg}{f", details: {e.detail}" if e.detail else ""}", level=e.level)
         return build_response(e.code, msg=e.msg, detail=e.detail)
     
-    # @app.errorhandler(Exception)
-    # def handle_any_exception(e) -> Response:
-    #     log_request(f"Unhandled exception: {e}", level="error")
-    #     return build_response(500, msg="Internal server error")
     
     @app.errorhandler(500)
     def handle_internal_server_error(e) -> Response:
         log_request(f"Unhandled exception: {e}", level="error")
         return build_response(500, msg="Internal server error")
+
+    
+    # @app.errorhandler(Exception)
+    # def handle_any_exception(e) -> Response:
+    #     log_request(f"Unhandled exception: {e}", level="error")
+    #     return build_response(500, msg="Internal server error")

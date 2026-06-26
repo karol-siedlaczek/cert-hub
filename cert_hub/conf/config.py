@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import ClassVar, Any, cast
 from dataclasses import dataclass, field
 from cert_hub.validation.require import Require
-from cert_hub.domain.cert import Cert
+from cert_hub.domain.cert.cert import Cert
+from cert_hub.domain.cert.letsencrypt_cert import LetsEncryptCert
+from cert_hub.domain.cert.static_cert import StaticCert
 from cert_hub.domain.identity import Identity
 from cert_hub.exception.validator_exceptions import ValidationError
 
@@ -28,6 +30,8 @@ class Config:
     aws_access_key_id: str = None
     aws_secret_access_key: str = None
     cloudflare_dns_api_token: str = None
+    static_certs_dir: Path = "/static-certs"
+    trusted_proxy_hops: int = 0
     certs: list[Cert] = field(default_factory=list)
     identities: list[Identity] = field(default_factory=list)
     
@@ -60,14 +64,23 @@ class Config:
 
         conf_file = Path(os.getenv("CONF_FILE", "/config/config.yaml"))
         conf_path = Require.file_exists("CONF_FILE", conf_file)
-        
+
+        static_certs_dir = Path(os.getenv("STATIC_CERTS_DIR", "/static-certs"))
+
+        trusted_proxy_hops = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))
+        Require.type("TRUSTED_PROXY_HOPS", trusted_proxy_hops, int)
+        Require.min("TRUSTED_PROXY_HOPS", trusted_proxy_hops, 0)
+
         try:
             raw_conf = yaml.safe_load(conf_path.read_text(encoding="UTF-8")) or {}
         except yaml.YAMLError as e:
             raise ValidationError(f"Failed to parse '{conf_file}' config file as valid YAML file: {e}")
 
         try:
-            certs = cls._parse_certs(raw_conf.get("certs"))
+            seen_ids: set[str] = set()
+            le_certs = cls._parse_letsencrypt_certs(raw_conf.get("letsencrypt_certs"), seen_ids)
+            static_certs = cls._parse_static_certs(raw_conf.get("static_certs"), static_certs_dir, seen_ids)
+            certs = [*le_certs, *static_certs]
             identities = cls._parse_identities(raw_conf.get("identities"))
         except ValidationError as e:
             raise ValidationError(f"Failed to parse '{conf_file}' config file: {e}")
@@ -85,8 +98,10 @@ class Config:
             aws_access_key_id=cls._resolve_secret("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=aws_secret_access_key,
             cloudflare_dns_api_token=cloudflare_dns_api_token,
+            static_certs_dir=static_certs_dir,
+            trusted_proxy_hops=trusted_proxy_hops,
             certs=certs,
-            identities=identities,
+            identities=identities
         )
 
 
@@ -100,21 +115,44 @@ class Config:
 
 
     @staticmethod
-    def _parse_certs(certs_raw: Any) -> list[Cert]:
+    def _parse_letsencrypt_certs(certs_raw: Any, seen_ids: set[str]) -> list[LetsEncryptCert]:
         if certs_raw is None:
             return []
-        
-        Require.type("certs", certs_raw, list)
-        certs: list[Cert] = []
-        
+
+        Require.type("letsencrypt_certs", certs_raw, list)
+        certs: list[LetsEncryptCert] = []
+
         for i, item in enumerate(certs_raw):
-            Require.type(f"certs[{i}]", item, dict)
-            Require.not_one_of(f"certs[{i}].id", item.get("id"), [c.id for c in certs])
+            Require.type(f"letsencrypt_certs[{i}]", item, dict)
+            Require.not_one_of(f"letsencrypt_certs[{i}].id", item.get("id"), list(seen_ids))
             try:
-                certs.append(Cert.from_dict(item))
+                cert = LetsEncryptCert.from_dict(item)
             except ValidationError as e:
-                raise ValidationError(f"Error found at certs[{i}]: {e}")
-        
+                raise ValidationError(f"Error found at letsencrypt_certs[{i}]: {e}")
+            seen_ids.add(cert.id)
+            certs.append(cert)
+
+        return certs
+
+
+    @staticmethod
+    def _parse_static_certs(certs_raw: Any, static_certs_dir: Path, seen_ids: set[str]) -> list[StaticCert]:
+        if certs_raw is None:
+            return []
+
+        Require.type("static_certs", certs_raw, list)
+        certs: list[StaticCert] = []
+
+        for i, item in enumerate(certs_raw):
+            Require.type(f"static_certs[{i}]", item, dict)
+            Require.not_one_of(f"static_certs[{i}].id", item.get("id"), list(seen_ids))
+            try:
+                cert = StaticCert.from_dict(item, static_certs_dir)
+            except ValidationError as e:
+                raise ValidationError(f"Error found at static_certs[{i}]: {e}")
+            seen_ids.add(cert.id)
+            certs.append(cert)
+
         return certs
     
     

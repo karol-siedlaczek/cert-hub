@@ -1,5 +1,5 @@
 from typing import Sequence
-from cert_hub.domain.cert_status import CertStatus
+from cert_hub.domain.cert.cert_status import CertStatus
 from cert_hub.exception.api_exceptions import ApiError
 
 class CertBotError(ApiError):
@@ -24,7 +24,7 @@ class CertBotError(ApiError):
             "cmd": cmd,
             "return_code": return_code,
             "output": output
-        } # TODO - Test CLI run when first cert is successful and another raises CertBotError
+        }
         super().__init__(502, msg=f"CertBot failed while processing certificate '{cert_name}'", detail=detail, level="error")
     
 
