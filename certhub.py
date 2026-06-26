@@ -840,6 +840,12 @@ def cert_update_in_place(
         [PemType.default().value], "--pem", "-P",
         help=f"PEM file type(s) to produce; repeatable. Files are named <prefix>_<type>.pem. Choices: {', '.join(PemType.values())}"
     ),
+    ext: list[str] = typer.Option(
+        [], "--ext",
+        help="Override file extension per PEM type; repeatable, form type=ext (e.g. --ext cert=crt --ext privkey=key). "
+             "Default is .pem for every type. NOTE: HAProxy ignores the extension (it parses PEM content) and 'bundle' "
+             "is the right type for HAProxy's crt; --ext is for consumers like nginx/Apache that key off the extension."
+    ),
     post_hook: str = typer.Option(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expiring or expired certificate"
@@ -893,6 +899,7 @@ def cert_update_in_place(
         raise typer.BadParameter(f"Invalid --chmod value '{chmod}', must be an octal number (e.g. 600, 640, 644)")
     
     pem_types = parse_pem_types(pem)
+    ext_map = parse_pem_extensions(ext, pem_types)
     settings = load_settings(ctx, format)
     nagios = Nagios.from_options(
         settings.nsca_server,
@@ -940,7 +947,7 @@ def cert_update_in_place(
             ))
             continue
 
-        pem_files = [certs_dir / f"{prefix}_{pem_type.value}.pem" for pem_type in pem_types]
+        pem_files = [certs_dir / pem_filename(prefix, pem_type, ext_map) for pem_type in pem_types]
         fields = required_server_fields(pem_types)
 
         certificate = cert.get("certificate")
@@ -1014,7 +1021,7 @@ def cert_update_in_place(
         local_expire_date = None
 
         if ref_type is not None:
-            ref_file = certs_dir / f"{prefix}_{ref_type.value}.pem"
+            ref_file = certs_dir / pem_filename(prefix, ref_type, ext_map)
             if ref_file.exists():
                 try:
                     local_expire_date = get_cert_expire_date(ref_file)
@@ -1046,7 +1053,7 @@ def cert_update_in_place(
         # just-written reference file. With no cert-bearing reference (e.g. only privkey) it stays None.
         if local_expire_date is None and ref_type is not None:
             try:
-                local_expire_date = get_cert_expire_date(certs_dir / f"{prefix}_{ref_type.value}.pem")
+                local_expire_date = get_cert_expire_date(certs_dir / pem_filename(prefix, ref_type, ext_map))
             except Exception:
                 local_expire_date = None
 
@@ -1285,6 +1292,35 @@ def parse_pem_types(values: list[str]) -> list["PemType"]:
         if pem_type not in result:
             result.append(pem_type)
     return result
+
+
+def pem_filename(prefix: str, pem_type: "PemType", ext_map: dict["PemType", str]) -> str:
+    return f"{prefix}_{pem_type.value}.{ext_map[pem_type]}"
+
+
+EXT_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def parse_pem_extensions(values: list[str], pem_types: list["PemType"]) -> dict["PemType", str]:
+    ext_map: dict[PemType, str] = {pem_type: "pem" for pem_type in pem_types}
+    for value in values:
+        if "=" not in value:
+            raise typer.BadParameter(f"Invalid --ext entry '{value}', expected form type=ext")
+        raw_type, raw_ext = value.split("=", 1)
+        pem_type = PemType.from_string(raw_type.strip())
+        ext = raw_ext.strip()
+        if ext.startswith("."):
+            ext = ext[1:]
+        if not EXT_PATTERN.fullmatch(ext):
+            raise typer.BadParameter(
+                f"Invalid extension '{raw_ext}' for type '{raw_type.strip()}', must match {EXT_PATTERN.pattern}"
+            )
+        if pem_type not in ext_map:
+            raise typer.BadParameter(
+                f"--ext set for type '{pem_type.value}' which is not in --pem; add '-P {pem_type.value}' or remove the --ext entry"
+            )
+        ext_map[pem_type] = ext
+    return ext_map
 
 
 def resolve_pem_prefix(cert: dict) -> str:

@@ -348,6 +348,9 @@ certhub cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl 
 
 # Write a deploy bundle plus standalone cert and key files
 certhub cert update-in-place -d /etc/ssl/private --pem bundle --pem cert --pem privkey --post-hook "systemctl reload nginx"
+
+# Write cert and key with nginx-friendly extensions
+certhub cert update-in-place -d /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
 ```
 
 `cert update-in-place` writes PEM files controlled by the `-P/--pem` option (repeatable, default `bundle`). Accepted values:
@@ -356,9 +359,17 @@ certhub cert update-in-place -d /etc/ssl/private --pem bundle --pem cert --pem p
 - `chain` — chain/CA bundle only
 - `privkey` — private key only
 
-Each requested type produces a separate file named `<prefix>_<type>.pem` inside `--dest-dir`, where `<prefix>` is taken from the certificate's `pem_prefix` custom attr (see Configuration) or falls back to the cert id.
+Each requested type produces a separate file named `<prefix>_<type>.pem` (extension configurable via `--ext`, see below) inside `--dest-dir`, where `<prefix>` is taken from the certificate's `pem_prefix` custom attr (see Configuration) or falls back to the cert id.
 
-If the server reports a certificate's status as `REVOKED`, `update-in-place` removes all matching local `<prefix>_<type>.pem` files. This counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-revoke` is passed.
+The `--ext` option (repeatable, form `type=ext`) overrides the file extension for a given PEM type. The default extension is `.pem` for every type; omitting `--ext` produces behaviour identical to previous releases. Example:
+
+```
+--ext cert=crt --ext privkey=key
+```
+
+produces `<prefix>_cert.crt` and `<prefix>_privkey.key` instead of the default `.pem` files. This is useful for web servers like nginx or Apache that key off the file extension. HAProxy ignores the extension and parses PEM content directly — use `bundle` as the type for HAProxy's `crt` directive; `--ext` is not needed there.
+
+If the server reports a certificate's status as `REVOKED`, `update-in-place` removes all matching local `<prefix>_<type>.<ext>` files (where `<ext>` is `.pem` by default or whatever was set via `--ext`). This counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-revoke` is passed.
 
 Settings are resolved in this order (highest priority first):
 1. CLI flags (`--api-url`, `--token`, `--log-file`, `--log-level`).
