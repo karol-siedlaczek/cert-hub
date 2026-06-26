@@ -1,6 +1,6 @@
 # Cert Hub
 
-A management service for Let's Encrypt TLS certificates. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over certificates issued by `certbot` using DNS-01 challenges — issue, renew, read status and check status. Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate status to Nagios via NSCA.
+A management service for TLS certificates. It handles two kinds of certificates: **Let's Encrypt** certificates issued and renewed by `certbot` using DNS-01 challenges, and **static** (file-backed) certificates managed outside the app. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over them — read, check status, issue, renew, revoke, fetch PEM material, and update local files in place (static certificates support read/status only; issue/renew/revoke return `NOT_SUPPORTED`). Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate status to Nagios via NSCA.
 
 ## Development
 ### 1) Requirements
