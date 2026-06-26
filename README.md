@@ -128,8 +128,6 @@ docker compose down
 | `CERTBOT_RENEW_BEFORE_DAYS` | `number` | :x: | `30` | Days before expiration when a cert becomes renewable (1-60) |
 | `CERTBOT_TEST_CERT` | `bool` | :x: | `false` | If `true`, passes `--test-cert` to certbot (uses Let's Encrypt staging environment) |
 | `TRUSTED_PROXY_HOPS` | `number` | :x: | `0` | Number of trusted reverse proxies in front of the app. `0` (default) uses the direct peer IP for `allowed_cidrs` checks. When behind a proxy, set this to the proxy count so the real client IP is read from the rightmost `X-Forwarded-For` entries (via `ProxyFix`); otherwise the IP allowlist sees the proxy, not the client. |
-| `GIT_SHA` | `string` | :x: | `unknown` | Build commit SHA, surfaced by `GET /api/version`. Set at image build time. |
-| `BUILD_DATE` | `string` | :x: | `unknown` | Build date, surfaced by `GET /api/version`. Set at image build time. |
 | `HMAC_KEY_B64` | `string` | :heavy_check_mark: | - | Base64 HMAC key (minimum 32 bytes after decoding), used to verify tokens. Changing this value requires regenerate all identity passwords! |
 | `TOKEN_<ID>_HMAC` | `string` | :x: | - | Token HMAC-SHA256 (hex) for identity `<ID>` from `config.yaml`. Theoretically not required to start the application, but it is nice to have at least one identity  |
 
