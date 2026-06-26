@@ -1291,6 +1291,31 @@ def pem_filename(prefix: str, pem_type: "PemType", ext_map: dict["PemType", str]
     return f"{prefix}_{pem_type.value}.{ext_map[pem_type]}"
 
 
+EXT_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def parse_pem_extensions(values: list[str], pem_types: list["PemType"]) -> dict["PemType", str]:
+    ext_map: dict[PemType, str] = {pem_type: "pem" for pem_type in pem_types}
+    for value in values:
+        if "=" not in value:
+            raise typer.BadParameter(f"Invalid --ext entry '{value}', expected form type=ext")
+        raw_type, raw_ext = value.split("=", 1)
+        pem_type = PemType.from_string(raw_type.strip())
+        ext = raw_ext.strip()
+        if ext.startswith("."):
+            ext = ext[1:]
+        if not EXT_PATTERN.fullmatch(ext):
+            raise typer.BadParameter(
+                f"Invalid extension '{raw_ext}' for type '{raw_type.strip()}', must match {EXT_PATTERN.pattern}"
+            )
+        if pem_type not in ext_map:
+            raise typer.BadParameter(
+                f"--ext set for type '{pem_type.value}' which is not in --pem; add '-P {pem_type.value}' or remove the --ext entry"
+            )
+        ext_map[pem_type] = ext
+    return ext_map
+
+
 def resolve_pem_prefix(cert: dict) -> str:
     custom_attrs = cert.get("custom_attrs")
     if isinstance(custom_attrs, dict) and custom_attrs.get("pem_prefix"):
