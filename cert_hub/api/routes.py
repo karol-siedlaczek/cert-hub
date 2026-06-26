@@ -370,4 +370,4 @@ def admin_reload() -> Response:
         return build_response(502, msg="Failed to signal master process for reload", detail=str(e))
 
     log_request("Reload signal (SIGHUP) sent to master process", identity=identity, level="info")
-    return build_response(202, msg="Reload signal sent to master process", data={"master_pid": master_pid})
+    return build_response(202, msg=f"Reload signal sent to master process (PID {master_pid})", data={"master_pid": master_pid})

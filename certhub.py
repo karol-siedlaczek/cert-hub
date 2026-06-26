@@ -567,8 +567,25 @@ def version(
     response = client.request("GET", "/api/version")
     result = CmdResult.from_response(response)
     return result.render_and_exit(ctx.info_name, columns)
+
+
+@app.command(help="Reload server configuration (requires '*:reload' permission)")
+def reload(
+    ctx: typer.Context,
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns()
+) -> None:
+    client = Client.init(ctx, format, timeout=timeout)
+    response = client.request("POST", "/api/admin/reload")
     
-    
+    if response.ok:
+        print(response.json().get("message"))
+        return ExitCode.OK
+    else:
+        result = CmdResult.from_response(response)
+        return result.render_and_exit(ctx.info_name, columns)
+
 # ── token commands ───────────────────────────────────────────────────────────
 
 @token_app.command(name = "scope", help="Permissions for the current identity")
