@@ -1287,6 +1287,10 @@ def parse_pem_types(values: list[str]) -> list["PemType"]:
     return result
 
 
+def pem_filename(prefix: str, pem_type: "PemType", ext_map: dict["PemType", str]) -> str:
+    return f"{prefix}_{pem_type.value}.{ext_map[pem_type]}"
+
+
 def resolve_pem_prefix(cert: dict) -> str:
     custom_attrs = cert.get("custom_attrs")
     if isinstance(custom_attrs, dict) and custom_attrs.get("pem_prefix"):
