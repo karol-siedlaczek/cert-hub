@@ -1,3 +1,4 @@
+import importlib.metadata
 import pytest
 from datetime import datetime
 from flask import Flask
@@ -60,6 +61,41 @@ def test_secret_envs_missing_raises(monkeypatch):
     monkeypatch.delenv("CH_FAKE_SECRET__FILE", raising=False)
     with pytest.raises(ValidationError):
         Require.secret_envs(["CH_FAKE_SECRET"])
+
+
+def test_installed_module_passes_when_present(monkeypatch):
+    seen = {}
+
+    def fake_version(name):
+        seen["name"] = name
+        return "5.2.2"
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+    # A hyphenated pip distribution name must be queried verbatim. The old
+    # importlib.util.find_spec() check returned None for hyphenated names
+    # (illegal in module names), wrongly reporting installed packages as missing.
+    Require.installed_module("dns_provider", "aws", "certbot-dns-route53")  # must not raise
+    assert seen["name"] == "certbot-dns-route53"
+
+
+def test_installed_module_raises_when_missing(monkeypatch):
+    def fake_version(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+    with pytest.raises(ValidationError) as exc:
+        Require.installed_module("dns_provider", "aws", "certbot-dns-route53")
+    assert "certbot-dns-route53" in str(exc.value)
+
+
+def test_installed_module_accepts_real_hyphenated_distribution():
+    # Regression guard against the find_spec hyphen bug, exercised against the
+    # real installed distribution when available (e.g. in the Docker image).
+    try:
+        importlib.metadata.version("certbot-dns-route53")
+    except importlib.metadata.PackageNotFoundError:
+        pytest.skip("certbot-dns-route53 not installed in this environment")
+    Require.installed_module("dns_provider", "aws", "certbot-dns-route53")  # must not raise
 
 
 def test_query_one_of_returns_value_when_allowed():
