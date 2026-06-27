@@ -21,7 +21,7 @@ import subprocess
 import logging
 import requests
 from logging.handlers import RotatingFileHandler
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from enum import Enum
 from getpass import getpass
 from pathlib import Path
@@ -1335,9 +1335,17 @@ def write_status_file(path: Path, data: Any, exit_code: ExitCode, message: str) 
     }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="UTF-8")
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default) + "\n", encoding="UTF-8")
     except OSError as e:
         LOGGER.error(f"Failed to write status file '{path}': {safe_str(e)}")
+
+
+def _json_default(o: object) -> str:
+    # json.dumps cannot serialize datetime/date objects (e.g. the run timestamp and
+    # any cert expiry dates carried in the result data); render them as ISO 8601 strings.
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
 def safe_str(x: object) -> str:
