@@ -1019,13 +1019,10 @@ def cert_sync(
     highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
 
     if highest_exit_code == ExitCode.OK:
-        status_msg = f"{ExitCode.OK.name}: All certificates are up to date"
+        status_msg = f"{ExitCode.OK.name}: All certificates synced and up to date"
     else:
-        err_msg_parts = []
-        for r in results:
-            if r.code != ExitCode.OK:
-                err_msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
-        status_msg = ("\n").join(err_msg_parts)
+        failed = [r for r in results if r.code != ExitCode.OK]
+        status_msg = f"{highest_exit_code.name}: Following certs returned error: {(', ').join([f"{r.cert} ({r.msg})" for r in failed])}"
 
     if status_file:
         write_status_file(Path(status_file), result.data, highest_exit_code, status_msg)
@@ -1332,7 +1329,8 @@ def write_status_file(path: Path, data: Any, exit_code: ExitCode, message: str) 
     payload = {
         "status": exit_code.name,
         "exit_code": exit_code.value,
-        "message": message,
+        "msg": message,
+        "timestamp": datetime.now(),
         "result": data
     }
     try:
