@@ -1050,7 +1050,7 @@ def resolve_cert_ids(client: "Client", *, permission: str, patterns: list[str], 
     
     if not cert_ids:
         data: dict[str, Any] = {
-            "msg": f"No certificate found allowed for '{permission}' action for the current identity",
+            "msg": f"No certificate found that the current identity is allowed to {permission}",
             "permission": permission,
         }
         if patterns:
