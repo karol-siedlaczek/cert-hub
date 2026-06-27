@@ -1015,7 +1015,6 @@ def cert_sync(
             return result.render_and_exit(ctx.info_name)
     
     result = CmdResult.from_dict([r.to_serializable() for r in results], ExitCode.OK)
-
     highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
 
     if highest_exit_code == ExitCode.OK:
