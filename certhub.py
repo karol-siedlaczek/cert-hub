@@ -514,7 +514,7 @@ def reload(
     response = client.request("POST", "/api/admin/reload")
     
     if response.ok:
-        typer.secho("Success!\n", fg=typer.colors.GREEN)
+        typer.secho("Success!", fg=typer.colors.GREEN)
         typer.echo(response.json().get("message"))
         return ExitCode.OK
     else:
