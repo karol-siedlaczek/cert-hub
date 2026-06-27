@@ -28,20 +28,17 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table, box
 from dataclasses import dataclass
-from typing import Any, Optional, Dict, Sequence, NoReturn, ClassVar
+from typing import Any, Optional, Dict, Sequence, NoReturn
 from cryptography import x509
 
 ENV_VAR_API_URL = "CERTHUB_API_URL"
 ENV_VAR_TOKEN = "CERTHUB_TOKEN"
 ENV_VAR_LOG_FILE = "CERTHUB_LOG_FILE"
 ENV_VAR_LOG_LEVEL = "CERTHUB_LOG_LEVEL"
-ENV_VAR_NSCA_SERVER = "CERTHUB_NSCA_SERVER"
-ENV_VAR_NSCA_PORT = "CERTHUB_NSCA_PORT"
-ENV_VAR_NAGIOS_HOSTNAME = "CERTHUB_NAGIOS_HOSTNAME"
 SETTINGS_FILE = Path("~/.certhub").expanduser()
 DATE_FMT = "%Y-%m-%d %H:%M"
-NAGIOS_ESCAPE_CHAR = "</br>"
 PEM_FILENAME_PATTERN = r"^[\w.-]+$"
+EXT_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 LOGGER = logging.getLogger("certhub-cli")
 
 app = typer.Typer(add_completion=True, help="CLI for managing certificates in Cert Hub")
@@ -99,11 +96,12 @@ class PemType(Enum):
         return PemType.BUNDLE
     
     @classmethod
-    def from_string(cls, val: str) -> "PemType":
+    def from_string(cls, val: str, *, custom_msg_on_err: str = "") -> "PemType":
         try:
             return PemType(val)
         except ValueError:
-            raise typer.BadParameter(f"Unknown PEM type: {val}, must be one of: {(', ').join(PemType.values())}")
+            msg = custom_msg_on_err if custom_msg_on_err else f"Unknown PEM type: {val}, must be one of: {(', ').join(PemType.values())}"
+            raise typer.BadParameter(msg)
     
     
 class CertType(str, Enum):
@@ -114,6 +112,10 @@ class CertType(str, Enum):
     @classmethod
     def values(cls) -> list[str]:
         return [item.value for item in cls]
+    
+    @classmethod
+    def default(cls) -> "CertType":
+        return CertType.ALL
 
     @classmethod
     def from_string(cls, val: str) -> "CertType":
@@ -160,9 +162,9 @@ class Opt:
         )
 
     @staticmethod
-    def type(default: str = "all") -> Any:
+    def type(default: CertType = CertType.default()) -> Any:
         return typer.Option(
-            default, "--type",
+            default.value, "--type",
             help=f"Filter by certificate type: {', '.join(CertType.values())}"
         )
 
@@ -174,9 +176,6 @@ class Settings:
     log_file: str | None
     log_level: str | None
     format: Format | None
-    nsca_server: str | None
-    nsca_port: int | None
-    nagios_hostname: str | None
 
 
 @dataclass
@@ -420,11 +419,9 @@ class Client():
         ctx: typer.Context,
         fmt: str | None,
         *,
-        timeout: int, 
-        nagios: "Nagios | None" = None
+        timeout: int
     ) -> "Client":
         settings = load_settings(ctx, fmt)
-        
         base_url = settings.api_url.rstrip("/")
         session = requests.Session()
         
@@ -432,16 +429,14 @@ class Client():
             session.headers.update({"Authorization": f"Bearer {settings.token}"})
 
         session.headers.update({"Accept": "application/json"})
-        
         try:
             session.request("GET", f"{base_url}/ping", timeout=10)
         except requests.RequestException as e:
-            msg = "Error connecting to API server"
-            exit_code = ExitCode.CRITICAL
-            
-            if nagios:
-                nagios.send_passive_check_result(f"{exit_code.name}: {msg}, error: {e}", exit_code)
-            result = CmdResult.from_dict({"msg": msg, "error": str(e)}, exit_code)
+            payload = {
+                "msg": "Error connecting to API server", 
+                "error": str(e)
+            }
+            result = CmdResult.from_dict(payload, ExitCode.CRITICAL)
             return result.render_and_exit()
             
         return cls(base_url, session, timeout or 10)
@@ -455,7 +450,6 @@ class Client():
         json_body: Optional[Dict[str, Any]] = None,
     ) -> requests.Response:
         url = f"{self.base_url}{path}"
-        
         response = self.session.request(
             method=method.upper(),
             url=url,
@@ -463,52 +457,7 @@ class Client():
             json=json_body,
             timeout=self.timeout
         )
-        
         return response
-
-
-@dataclass
-class Nagios():
-    NSCA_CMD: ClassVar[str] = "/usr/sbin/send_nsca"
-    server: str
-    port: int
-    hostname: str
-    service: str
-    
-    @classmethod
-    def from_options(cls, server: str, port: int, hostname: str, service: str) -> "Nagios | None":
-        if not service:
-            return None
-            
-        if service and not all([server, port, hostname]):
-            raise typer.BadParameter(
-                "To send passive check result to Nagios all NSCA related options must be provided together. Run --help for details"
-            )
-        
-        nsca_cmd_path = Path(Nagios.NSCA_CMD)
-        
-        if not (nsca_cmd_path.exists() and os.access(nsca_cmd_path, os.X_OK)):
-            raise typer.BadParameter(
-                f"Failed to setup sending passive check result to Nagios: Path '{nsca_cmd_path}' not found or not executable"
-            )
-
-        return cls(server, port, hostname, service)
-    
-    def send_passive_check_result(self, msg: str, code: ExitCode) -> str:
-        cmd = f"echo -e \"{self.hostname}\t{self.service}\t{code.value}\t{msg}\" | {Nagios.NSCA_CMD} -H {self.server} -p {self.port} --quiet"
-        result = run_cmd(cmd, shell=True)
-        
-        if result.returncode != 0:
-            data = {
-                "msg": "Failed to send passive check result to Nagios",
-                "error": result.stderr,
-                "return_code": result.returncode,
-                "cmd": repr(cmd)
-            }
-            result = CmdResult.from_dict(data, ExitCode.CRITICAL)
-            return result.render_and_exit()
-            
-        return result.stdout
 
 
 # ── callback + root commands ─────────────────────────────────────────────────
@@ -536,24 +485,9 @@ def main(
         None, "--log-level",
         envvar=ENV_VAR_LOG_LEVEL,
         help=f"Log level. You can set environment or set LOG_LEVEL=<value> in {SETTINGS_FILE}"
-    ),
-    nsca_server: str = typer.Option(
-        None, "--nsca-server",
-        envvar=ENV_VAR_NSCA_SERVER,
-        help=f"NSCA server address used by 'cert update-in-place' to send passive check results to Nagios via send_nsca. Requires send_nsca to be installed and configured on this host. Must be used together with --nagios-hostname and --nagios-service (on the command). You can set environment or set NSCA_SERVER=<value> in {SETTINGS_FILE}"
-    ),
-    nsca_port: int = typer.Option(
-        None, "--nsca-port",
-        envvar=ENV_VAR_NSCA_PORT,
-        help=f"NSCA server port used by 'cert update-in-place' when sending passive check results to Nagios. Defaults to 5667 if not specified. Only effective when --nsca-server is set. You can set environment or set NSCA_PORT=<value> in {SETTINGS_FILE}"
-    ),
-    nagios_hostname: str = typer.Option(
-        None, "--nagios-hostname",
-        envvar=ENV_VAR_NAGIOS_HOSTNAME,
-        help=f"Nagios host_name as defined in Nagios host object configuration, used by 'cert update-in-place' to identify the monitored host when sending passive check results via NSCA. Must be used together with --nsca-server and --nagios-service (on the command). You can set environment or set NAGIOS_HOSTNAME=<value> in {SETTINGS_FILE}"
     )
 ) -> None:
-    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None, nsca_server=nsca_server, nsca_port=nsca_port, nagios_hostname=nagios_hostname)
+    ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None)
     
 
 @app.command(help="Versions and author")
@@ -580,7 +514,8 @@ def reload(
     response = client.request("POST", "/api/admin/reload")
     
     if response.ok:
-        print(response.json().get("message"))
+        typer.secho("Success!\n", fg=typer.colors.GREEN)
+        typer.echo(response.json().get("message"))
         return ExitCode.OK
     else:
         result = CmdResult.from_response(response)
@@ -685,7 +620,7 @@ def cert_status(
         None, "--exclude-ok",
         help="Hide certificates with OK status"
     ),
-    type: str = Opt.type("all"),
+    type: str = Opt.type(),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
@@ -711,7 +646,7 @@ def cert_issue(
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
     force: bool = Opt.force("Force reissue of certificate even if it already exists"),
-    type: str = Opt.type("letsencrypt"),
+    type: str = Opt.type(CertType.LETSENCRYPT)
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
@@ -729,7 +664,7 @@ def cert_renew(
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
     force: bool = Opt.force("Force certificate renew even if it does not need to be renewed"),
-    type: str = Opt.type("letsencrypt"),
+    type: str = Opt.type(CertType.LETSENCRYPT)
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
@@ -749,10 +684,12 @@ def cert_revoke(
     assume_yes: bool = typer.Option(
         False, "--yes-i-really-mean-it",
         help="Skip the interactive confirmation prompt (for automation)"
-    )
+    ),
+    type: str = Opt.type(CertType.LETSENCRYPT)
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
-    cert_ids = resolve_cert_ids(client, permission="revoke", patterns=patterns)
+    cert_type = CertType.from_string(type)
+    cert_ids = resolve_cert_ids(client, permission="revoke", patterns=patterns, cert_type=cert_type.value)
 
     typer.echo("The following certificates will be REVOKED (irreversible):")
     for cert_id in cert_ids:
@@ -806,7 +743,7 @@ def cert_list(
         None, "-l", "--long",
         help="Add to output sensitive data like certificate, chain and private key"
     ),
-    type: str = Opt.type("all"),
+    type: str = Opt.type(),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
@@ -825,8 +762,8 @@ def cert_list(
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
     
     
-@cert_app.command(name = "update-in-place", help="Update local expiring or expired certificates in place by downloading new certificates from the server")
-def cert_update_in_place(
+@cert_app.command(name = "sync", help="Sync local certificate files with the server: download and replace expiring, expired or missing certificates, and remove files for revoked ones")
+def cert_sync(
     ctx: typer.Context,
     timeout: int = Opt.timeout(10),
     format: str = Opt.format(),
@@ -852,7 +789,7 @@ def cert_update_in_place(
     ),
     omit_post_hook_on_revoke: bool = typer.Option(
         False, "--omit-post-hook-on-revoke",
-        help="Do not let revoked-cert cleanup trigger --post-hook (cleanup still happens and is reported)"
+        help="Do not let revoked cert cleanup trigger --post-hook (cleanup still happens and is reported)"
     ),
     owner: str = typer.Option(
         None, "--owner", "-O",
@@ -866,11 +803,13 @@ def cert_update_in_place(
         "640", "--chmod",
         help="Permissions for the certificate file in octal notation"
     ),
-    nagios_service: str = typer.Option(
-        None, '--nagios-service',
-        help="Nagios service description to report (the 'service_description' used in Nagios objects definition)",
+    status_file: str = typer.Option(
+        None, "--status-file",
+        help="Path to a JSON file to write after the run, capturing the iteration status: the rendered result "
+            "(same data shown on the console), the overall exit_code and the message. "
+            "Written on every outcome (success, fetch failure, post-hook failure). Parent directories are created if missing."
     ),
-    type: str = Opt.type("all"),
+    type: str = Opt.type()
 ) -> None:
     @dataclass
     class CertUpdateResult:
@@ -900,13 +839,6 @@ def cert_update_in_place(
     
     pem_types = parse_pem_types(pem)
     ext_map = parse_pem_extensions(ext, pem_types)
-    settings = load_settings(ctx, format)
-    nagios = Nagios.from_options(
-        settings.nsca_server,
-        settings.nsca_port,
-        settings.nagios_hostname,
-        nagios_service
-    )
     certs_dir = Path(dest_dir)
     
     if not certs_dir.exists():
@@ -920,13 +852,14 @@ def cert_update_in_place(
         "type": cert_type.value,
     }
 
-    client = Client.init(ctx, format, timeout=timeout, nagios=nagios)
+    client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/certs", params=params)
     result = CmdResult.from_response(response)
     
     if not response.ok:
-        if nagios:
-            nagios.send_passive_check_result(f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}", ExitCode.CRITICAL)
+        if status_file:
+            fetch_msg = f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}"
+            write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, fetch_msg)
         result.render_and_exit(ctx.info_name)
     
     results: list[CertUpdateResult] = []
@@ -948,7 +881,7 @@ def cert_update_in_place(
             continue
 
         pem_files = [certs_dir / pem_filename(prefix, pem_type, ext_map) for pem_type in pem_types]
-        fields = required_server_fields(pem_types)
+        fields = get_required_server_fields(pem_types)
 
         certificate = cert.get("certificate")
         chain = cert.get("chain")
@@ -1076,25 +1009,26 @@ def cert_update_in_place(
                 "cmd": post_hook
             }
             result = CmdResult.from_dict(data, ExitCode.CRITICAL)
-            if nagios:
-                nagios.send_passive_check_result(f"{ExitCode.CRITICAL.name}: {data['msg']}, updated certs: {data['updated_certs']}, error: {data['error']}", ExitCode.CRITICAL)
+            hook_msg = f"{ExitCode.CRITICAL.name}: {data['msg']}, updated certs: {data['updated_certs']}, error: {data['error']}"
+            if status_file:
+                write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, hook_msg)
             return result.render_and_exit(ctx.info_name)
     
     result = CmdResult.from_dict([r.to_serializable() for r in results], ExitCode.OK)
-    
-    if nagios:
-        highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
-        
-        if highest_exit_code == ExitCode.OK:
-            nagios_msg = f"{ExitCode.OK.name}: All certificates are up to date"
-        else:
-            err_msg_parts = []
-            for r in results:
-                if r.code != ExitCode.OK:
-                    err_msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
-            nagios_msg = (NAGIOS_ESCAPE_CHAR).join(err_msg_parts)
-        
-        nagios.send_passive_check_result(nagios_msg, highest_exit_code)
+
+    highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
+
+    if highest_exit_code == ExitCode.OK:
+        status_msg = f"{ExitCode.OK.name}: All certificates are up to date"
+    else:
+        err_msg_parts = []
+        for r in results:
+            if r.code != ExitCode.OK:
+                err_msg_parts.append(f"{r.code.name}: Certificate {r.cert}: {r.msg}{f" ({r.local_expire_date})" if r.local_expire_date else ""}")
+        status_msg = ("\n").join(err_msg_parts)
+
+    if status_file:
+        write_status_file(Path(status_file), result.data, highest_exit_code, status_msg)
 
     return result.render_and_exit(ctx.info_name, columns)
     
@@ -1199,7 +1133,6 @@ def setup_logging(log_file: str | None, log_level: str | None) -> None:
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
-
     logger.addHandler(handler)
     logger.setLevel(level)
 
@@ -1233,13 +1166,6 @@ def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
         settings.log_file = file_settings.get("LOG_FILE")
     if not settings.log_level:
         settings.log_level = file_settings.get("LOG_LEVEL")
-    if not settings.nsca_server:
-        settings.nsca_server = file_settings.get("NSCA_SERVER")
-    if settings.nsca_port is None:
-        port = file_settings.get("NSCA_PORT")
-        settings.nsca_port = int(port) if port else None
-    if not settings.nagios_hostname:
-        settings.nagios_hostname = file_settings.get("NAGIOS_HOSTNAME")
 
     setup_logging(settings.log_file, settings.log_level)
     settings.format = Format.from_string(format)
@@ -1298,16 +1224,16 @@ def pem_filename(prefix: str, pem_type: "PemType", ext_map: dict["PemType", str]
     return f"{prefix}_{pem_type.value}.{ext_map[pem_type]}"
 
 
-EXT_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
-
-
 def parse_pem_extensions(values: list[str], pem_types: list["PemType"]) -> dict["PemType", str]:
     ext_map: dict[PemType, str] = {pem_type: "pem" for pem_type in pem_types}
     for value in values:
         if "=" not in value:
             raise typer.BadParameter(f"Invalid --ext entry '{value}', expected form type=ext")
         raw_type, raw_ext = value.split("=", 1)
-        pem_type = PemType.from_string(raw_type.strip())
+        pem_type = PemType.from_string(
+            raw_type.strip(), 
+            custom_msg_on_err=f"Unknown --ext entry: {raw_type}={raw_ext}, part before '=' must be one of: {(', ').join(PemType.values())}"
+        )
         ext = raw_ext.strip()
         if ext.startswith("."):
             ext = ext[1:]
@@ -1317,7 +1243,7 @@ def parse_pem_extensions(values: list[str], pem_types: list["PemType"]) -> dict[
             )
         if pem_type not in ext_map:
             raise typer.BadParameter(
-                f"--ext set for type '{pem_type.value}' which is not in --pem; add '-P {pem_type.value}' or remove the --ext entry"
+                f"--ext set for type '{pem_type.value}' which is not included by --pem/-P, add '-P {pem_type.value}' or remove the --ext entry"
             )
         ext_map[pem_type] = ext
     return ext_map
@@ -1348,7 +1274,7 @@ def pem_content_for(
     return "\n".join(parts) + "\n"
 
 
-def required_server_fields(pem_types: list["PemType"]) -> set[str]:
+def get_required_server_fields(pem_types: list["PemType"]) -> set[str]:
     fields: set[str] = set()
     for pem_type in pem_types:
         if pem_type in (PemType.CERT, PemType.BUNDLE):
@@ -1399,6 +1325,23 @@ def _write_secure(path: Path, content: str, *, mode: int, owner: str | None, gro
         raise
 
 
+def write_status_file(path: Path, data: Any, exit_code: ExitCode, message: str) -> None:
+    # Persist the outcome of a `cert sync` run for monitoring/automation:
+    # the rendered result (same data shown on the console), the overall exit code and
+    # the message. Failure to write is logged but does not abort the run — the certificate update itself has already happened.
+    payload = {
+        "status": exit_code.name,
+        "exit_code": exit_code.value,
+        "message": message,
+        "result": data
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="UTF-8")
+    except OSError as e:
+        LOGGER.error(f"Failed to write status file '{path}': {safe_str(e)}")
+
+
 def safe_str(x: object) -> str:
     return str(x).encode("unicode_escape").decode()
 
@@ -1436,4 +1379,4 @@ def run_cmd(
 
 
 if __name__ == "__main__":
-    app()
+    app(prog_name="certhub")

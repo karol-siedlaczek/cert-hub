@@ -1,6 +1,6 @@
 # Cert Hub
 
-A management service for TLS certificates. It handles two kinds of certificates: **Let's Encrypt** certificates issued and renewed by `certbot` using DNS-01 challenges, and **static** (file-backed) certificates managed outside the app. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over them — read, check status, issue, renew, revoke, fetch PEM material, and update local files in place (static certificates support read/status only; issue/renew/revoke return `NOT_SUPPORTED`). Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API and can additionally report certificate status to Nagios via NSCA.
+A management service for TLS certificates. It handles two kinds of certificates: **Let's Encrypt** certificates issued and renewed by `certbot` using DNS-01 challenges, and **static** (file-backed) certificates managed outside the app. It exposes a Flask + gunicorn HTTP API plus a `certhub` CLI that perform RBAC-checked operations over them — read, check status, issue, renew, revoke, fetch PEM material, and update local files in place (static certificates support read/status only; issue/renew/revoke return `NOT_SUPPORTED`). Certificates and access policies are declared in a `config.yaml` file, and authentication uses HMAC bearer tokens with per-identity RBAC (`<cert>:<action>` permissions) combined with allowed-CIDR checks. The CLI (`certhub.py`, built with Typer + Rich) is a thin client over the API.
 
 ## Development
 ### 1) Requirements
@@ -144,7 +144,7 @@ letsencrypt_certs:
       - "example.com"
     dns_provider: "aws"
     custom_attrs: # Custom attributes returned by API, can be used by CLI
-      pem_prefix: "example"   # base name for files written by `cert update-in-place` (defaults to cert id)
+      pem_prefix: "example"   # base name for files written by `cert sync` (defaults to cert id)
       custom_key: custom_value
 
 static_certs:
@@ -153,7 +153,7 @@ static_certs:
     privkey_file: "internal.key"
     chain_file: "internal.chain"     # optional
     custom_attrs:
-      pem_prefix: "internal"   # base name for files written by `cert update-in-place` (defaults to cert id)
+      pem_prefix: "internal"   # base name for files written by `cert sync` (defaults to cert id)
 
 identities:
   - id: "admin"
@@ -297,7 +297,7 @@ certhub
     ├── issue                       Issue new certificates for the identity or pattern
     ├── renew                       Renew existing certificates for the identity or pattern
     ├── revoke                      Revoke one or more certificates (requires confirmation)
-    └── update-in-place             Download and replace local expiring/expired certificate files in place
+    └── sync                        Sync local certificate files with the server (replace expiring/expired/missing, remove revoked)
 ```
 
 Run `certhub --help`, or `certhub <group> --help` / `certhub <group> <command> --help`, to see all options for each command.
@@ -305,7 +305,7 @@ Run `certhub --help`, or `certhub <group> --help` / `certhub <group> <command> -
 Each subcommand accepts `-t/--timeout` (default `10`), `-f/--format` (`table` (default), `json`, `kv`, `value`) and `-c/--column` (repeatable). Passwords are never echoed; they are read via a confirm prompt when omitted.
 
 The `cert` subcommands that operate across certificate types accept a `--type` flag (`letsencrypt|static|all`) to filter which certificates are targeted:
-- `cert list`, `cert status`, `cert update-in-place`: default `all`
+- `cert list`, `cert status`, `cert sync`: default `all`
 - `cert issue`, `cert renew`: default `letsencrypt` (static certificates return `NOT_SUPPORTED`)
 
 Example usage:
@@ -343,17 +343,17 @@ certhub cert revoke --pattern "example"
 # Bypass the confirmation prompt (use with caution)
 certhub cert revoke --pattern "example" --yes-i-really-mean-it
 
-# Update locally stored cert in place if server has newer version
-certhub cert update-in-place --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
+# Sync locally stored cert files with the server if it has a newer version
+certhub cert sync --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
 
 # Write a deploy bundle plus standalone cert and key files
-certhub cert update-in-place -d /etc/ssl/private --pem bundle --pem cert --pem privkey --post-hook "systemctl reload nginx"
+certhub cert sync -d /etc/ssl/private --pem bundle --pem cert --pem privkey --post-hook "systemctl reload nginx"
 
 # Write cert and key with nginx-friendly extensions
-certhub cert update-in-place -d /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
+certhub cert sync -d /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
 ```
 
-`cert update-in-place` writes PEM files controlled by the `-P/--pem` option (repeatable, default `bundle`). Accepted values:
+`cert sync` writes PEM files controlled by the `-P/--pem` option (repeatable, default `bundle`). Accepted values:
 - `bundle` — certificate + chain + private key concatenated into one file
 - `cert` — certificate only
 - `chain` — chain/CA bundle only
@@ -369,7 +369,22 @@ The `--ext` option (repeatable, form `type=ext`) overrides the file extension fo
 
 produces `<prefix>_cert.crt` and `<prefix>_privkey.key` instead of the default `.pem` files. This is useful for web servers like nginx or Apache that key off the file extension. HAProxy ignores the extension and parses PEM content directly — use `bundle` as the type for HAProxy's `crt` directive; `--ext` is not needed there.
 
-If the server reports a certificate's status as `REVOKED`, `update-in-place` removes all matching local `<prefix>_<type>.<ext>` files (where `<ext>` is `.pem` by default or whatever was set via `--ext`). This counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-revoke` is passed.
+If the server reports a certificate's status as `REVOKED`, `cert sync` removes all matching local `<prefix>_<type>.<ext>` files (where `<ext>` is `.pem` by default or whatever was set via `--ext`). This counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-revoke` is passed.
+
+The `--status-file <path>` option writes a JSON summary of the run after it completes, useful for monitoring or automation. It is written on every outcome (success, certificate-fetch failure, post-hook failure); parent directories are created if missing. The file contains:
+
+```json
+{
+  "status": "OK",
+  "exit_code": 0,
+  "message": "OK: All certificates are up to date",
+  "result": [ { "id": "example", "status": "OK", "updated": true, "...": "..." } ]
+}
+```
+
+- `status` / `exit_code` — the overall outcome: the highest severity across all certificates (`OK`/`WARNING`/`CRITICAL`/`UNKNOWN` and `0`/`1`/`2`/`3`).
+- `message` — a human-readable summary; on success `OK: All certificates are up to date`, otherwise one line per problem certificate (joined with newlines).
+- `result` — the same per-certificate rows printed to the console.
 
 Settings are resolved in this order (highest priority first):
 1. CLI flags (`--api-url`, `--token`, `--log-file`, `--log-level`).

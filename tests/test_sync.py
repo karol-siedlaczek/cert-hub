@@ -1,6 +1,6 @@
-"""Command-level integration tests for `cert update-in-place`.
+"""Command-level integration tests for `cert sync`.
 
-These exercise `cert_update_in_place` end-to-end (CLI invocation through to
+These exercise `cert_sync` end-to-end (CLI invocation through to
 on-disk files), locking in the three-site filename-consistency invariant and
 the configurable-extension behaviour that the helper unit tests do not cover.
 
@@ -10,6 +10,7 @@ env vars satisfy the command's own `load_settings` call.
 """
 
 import datetime as dt
+import json
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -40,8 +41,7 @@ def _isolate_settings_file(tmp_path, monkeypatch):
     # rendered, not the file-writing logic under test.
     settings = certhub.Settings(
         api_url="http://x", token="t", log_file=None, log_level=None,
-        format=certhub.Format.JSON, nsca_server=None, nsca_port=None,
-        nagios_hostname=None,
+        format=certhub.Format.JSON,
     )
     monkeypatch.setattr(certhub, "get_ctx_settings", lambda: settings)
 
@@ -96,14 +96,14 @@ def _patch_client(monkeypatch, cert_dicts):
     """Make Client.init return a fake client serving `cert_dicts` as /api/certs."""
     monkeypatch.setattr(
         certhub.Client, "init",
-        classmethod(lambda cls, ctx, fmt, *, timeout, nagios=None: _FakeClient(cert_dicts)),
+        classmethod(lambda cls, ctx, fmt, *, timeout: _FakeClient(cert_dicts)),
     )
 
 
 def _invoke(tmp_path, extra_args, cert_dicts, monkeypatch):
     _patch_client(monkeypatch, cert_dicts)
     runner = CliRunner()
-    args = ["cert", "update-in-place", "-d", str(tmp_path)] + extra_args
+    args = ["cert", "sync", "-d", str(tmp_path)] + extra_args
     return runner.invoke(certhub.app, args, env=ENV)
 
 
@@ -208,6 +208,50 @@ def test_expiry_update_custom_ext(tmp_path, monkeypatch):
     assert "Updated" in result.output
     # No .pem sibling should have appeared.
     assert not (tmp_path / "mycert_cert.pem").exists()
+
+
+def test_status_file_on_success(tmp_path, monkeypatch):
+    """--status-file writes JSON: OK status/exit_code, OK message, and the result rows."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(
+        cert_id="mycert",
+        certificate=cert_pem,
+        private_key=key_pem,
+        expire_date=not_after.strftime(DATE_FMT),
+    )
+
+    status_path = tmp_path / "status" / "result.json"
+    result = _invoke(
+        tmp_path, ["--status-file", str(status_path)], [cert], monkeypatch
+    )
+
+    assert result.exit_code == 0, result.output
+    assert status_path.exists()  # parent dir created on demand
+    status = json.loads(status_path.read_text())
+    assert status["status"] == "OK"
+    assert status["exit_code"] == 0
+    assert status["message"] == "OK: All certificates are up to date"
+    # result mirrors the console rows
+    assert isinstance(status["result"], list)
+    assert status["result"][0]["id"] == "mycert"
+    assert status["result"][0]["updated"] is True
+
+
+def test_status_file_on_warning(tmp_path, monkeypatch):
+    """Cert not issued on server -> status file records WARNING + the same message text."""
+    cert = _cert_dict(cert_id="mycert", certificate=None, private_key=None)
+
+    status_path = tmp_path / "result.json"
+    result = _invoke(
+        tmp_path, ["--status-file", str(status_path)], [cert], monkeypatch
+    )
+
+    assert result.exit_code == 0, result.output
+    status = json.loads(status_path.read_text())
+    assert status["status"] == "WARNING"
+    assert status["exit_code"] == 1
+    assert "Certificate mycert" in status["message"]
+    assert "Not issued on server side" in status["message"]
 
 
 def test_revoke_removes_custom_ext(tmp_path, monkeypatch):
