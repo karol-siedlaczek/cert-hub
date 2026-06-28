@@ -325,7 +325,7 @@ certhub token scope
 # Show status for certs
 certhub cert status --exclude-ok
 
-# Show certificate information
+# Show cert information
 certhub cert list --pattern "example*"
 
 # Print raw PEM for one certificate (default bundle; use --type cert|chain|privkey)
