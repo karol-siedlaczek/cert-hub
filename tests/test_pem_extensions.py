@@ -1,7 +1,30 @@
 import pytest
 
 import certhub
-from certhub import PemType, pem_filename, parse_pem_extensions
+from certhub import (
+    PemType,
+    pem_filename,
+    parse_pem_extensions,
+    pem_content_for,
+    get_required_server_fields,
+    expiry_reference_type,
+)
+
+
+def test_fullchain_content_is_cert_then_chain_without_key():
+    content = pem_content_for(PemType.FULLCHAIN, "CERT", "CHAIN", "KEY")
+    assert content == "CERT\nCHAIN\n"
+
+
+def test_fullchain_required_fields():
+    fields = get_required_server_fields([PemType.FULLCHAIN])
+    assert fields == {"certificate", "chain", "expire_date"}
+
+
+def test_fullchain_is_expiry_reference():
+    assert expiry_reference_type([PemType.FULLCHAIN]) == PemType.FULLCHAIN
+    # bundle still wins when both are requested
+    assert expiry_reference_type([PemType.FULLCHAIN, PemType.BUNDLE]) == PemType.BUNDLE
 
 
 def test_pem_filename_uses_mapped_extension():

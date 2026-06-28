@@ -86,6 +86,7 @@ class PemType(Enum):
     PRIV_KEY = "privkey"
     CHAIN = "chain"
     BUNDLE = "bundle"
+    FULLCHAIN = "fullchain"
     
     @classmethod
     def values(cls) -> list[str]:
@@ -1264,6 +1265,8 @@ def pem_content_for(
         parts = [chain]
     elif pem_type == PemType.PRIV_KEY:
         parts = [private_key]
+    elif pem_type == PemType.FULLCHAIN:
+        parts = [certificate, chain]
     else:  # PemType.BUNDLE
         parts = [certificate, chain, private_key]
     parts = [part.strip() for part in parts if part]
@@ -1273,13 +1276,13 @@ def pem_content_for(
 def get_required_server_fields(pem_types: list["PemType"]) -> set[str]:
     fields: set[str] = set()
     for pem_type in pem_types:
-        if pem_type in (PemType.CERT, PemType.BUNDLE):
+        if pem_type in (PemType.CERT, PemType.BUNDLE, PemType.FULLCHAIN):
             fields.add("certificate")
         if pem_type in (PemType.PRIV_KEY, PemType.BUNDLE):
             fields.add("private_key")
-        if pem_type == PemType.CHAIN:
+        if pem_type in (PemType.CHAIN, PemType.FULLCHAIN):
             fields.add("chain")
-    if any(pem_type in (PemType.BUNDLE, PemType.CERT) for pem_type in pem_types):
+    if any(pem_type in (PemType.BUNDLE, PemType.CERT, PemType.FULLCHAIN) for pem_type in pem_types):
         fields.add("expire_date")
     return fields
 
@@ -1287,6 +1290,8 @@ def get_required_server_fields(pem_types: list["PemType"]) -> set[str]:
 def expiry_reference_type(pem_types: list["PemType"]) -> "PemType | None":
     if PemType.BUNDLE in pem_types:
         return PemType.BUNDLE
+    if PemType.FULLCHAIN in pem_types:
+        return PemType.FULLCHAIN
     if PemType.CERT in pem_types:
         return PemType.CERT
     return None

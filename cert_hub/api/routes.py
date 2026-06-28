@@ -223,7 +223,7 @@ def cert_catalog() -> Response:
 
 @api.route("/api/certs/<cert_id>/pem", methods=["GET"])
 def cert_pem(cert_id: str) -> Response:
-    pem_type = query_one_of("type", default="bundle", allowed=["bundle", "cert", "chain", "privkey"])
+    pem_type = query_one_of("type", default="bundle", allowed=["bundle", "cert", "chain", "privkey", "fullchain"])
     ctx = Context.authenticate()
     cert = ctx.resolve_cert(cert_id, PermissionAction.READ)
 
@@ -234,6 +234,9 @@ def cert_pem(cert_id: str) -> Response:
             body = cert.get_chain()
         elif pem_type == "privkey":
             body = cert.get_private_key()
+        elif pem_type == "fullchain":
+            parts = [p.strip() for p in (cert.get_certificate(), cert.get_chain()) if p]
+            body = "\n".join(parts) + "\n"
         else:
             parts = [p.strip() for p in (cert.get_certificate(), cert.get_chain(), cert.get_private_key()) if p]
             body = "\n".join(parts) + "\n"

@@ -210,6 +210,47 @@ def test_expiry_update_custom_ext(tmp_path, monkeypatch):
     assert not (tmp_path / "mycert_cert.pem").exists()
 
 
+def test_fullchain_writes_cert_and_chain_without_key(tmp_path, monkeypatch):
+    """-P fullchain -> <prefix>_fullchain.pem holds cert + chain, never the private key."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    chain_pem, _, _ = _make_cert(days_valid=730, cn="intermediate")
+    cert = _cert_dict(
+        cert_id="mycert",
+        certificate=cert_pem,
+        private_key=key_pem,
+        chain=chain_pem,
+        expire_date=not_after.strftime(DATE_FMT),
+    )
+
+    result = _invoke(tmp_path, ["-P", "fullchain"], [cert], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    fullchain = tmp_path / "mycert_fullchain.pem"
+    assert fullchain.exists()
+    content = fullchain.read_text()
+    assert content.strip() == f"{cert_pem.strip()}\n{chain_pem.strip()}"
+    assert "PRIVATE KEY" not in content
+    # bundle sibling must not appear from a fullchain-only run
+    assert not (tmp_path / "mycert_bundle.pem").exists()
+
+
+def test_fullchain_missing_chain_is_critical(tmp_path, monkeypatch):
+    """fullchain requires the chain; server returning none -> CRITICAL, no file written."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(
+        cert_id="mycert",
+        certificate=cert_pem,
+        private_key=key_pem,
+        chain=None,
+        expire_date=not_after.strftime(DATE_FMT),
+    )
+
+    result = _invoke(tmp_path, ["-P", "fullchain"], [cert], monkeypatch)
+
+    assert "Chain is missing on server side" in result.output
+    assert not (tmp_path / "mycert_fullchain.pem").exists()
+
+
 def test_status_file_on_success(tmp_path, monkeypatch):
     """--status-file writes JSON: OK status/exit_code, OK message, and the result rows."""
     cert_pem, key_pem, not_after = _make_cert(days_valid=365)
@@ -230,7 +271,7 @@ def test_status_file_on_success(tmp_path, monkeypatch):
     status = json.loads(status_path.read_text())
     assert status["status"] == "OK"
     assert status["exit_code"] == 0
-    assert status["message"] == "OK: All certificates are up to date"
+    assert status["msg"] == "OK: All certificates synced and up to date"
     # result mirrors the console rows
     assert isinstance(status["result"], list)
     assert status["result"][0]["id"] == "mycert"
@@ -250,8 +291,9 @@ def test_status_file_on_warning(tmp_path, monkeypatch):
     status = json.loads(status_path.read_text())
     assert status["status"] == "WARNING"
     assert status["exit_code"] == 1
-    assert "Certificate mycert" in status["message"]
-    assert "Not issued on server side" in status["message"]
+    assert status["msg"].startswith("WARNING:")
+    assert "mycert" in status["msg"]
+    assert "Not issued on server side" in status["msg"]
 
 
 def test_revoke_removes_custom_ext(tmp_path, monkeypatch):
