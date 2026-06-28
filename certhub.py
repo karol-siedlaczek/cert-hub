@@ -1003,14 +1003,14 @@ def cert_sync(
         result = run_cmd(post_hook, shell=True)
         if result.returncode != 0:
             data = {
-                "msg": "Failed to run post-hook after successful local certificates update",
+                "msg": "Failed to run post-hook after successful local certificate sync",
                 "updated_certs": ", ".join([r.cert for r in results if r.updated]),
                 "error": safe_str(result.stderr),
                 "return_code": result.returncode,
                 "cmd": post_hook
             }
             result = CmdResult.from_dict(data, ExitCode.CRITICAL)
-            hook_msg = f"{ExitCode.CRITICAL.name}: {data['msg']}, updated certs: {data['updated_certs']}, error: {data['error']}"
+            hook_msg = f"{ExitCode.CRITICAL.name}: {data['msg']}, synced certs: {data['updated_certs']}, error: {data['error']}"
             if status_file:
                 write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, hook_msg)
             return result.render_and_exit(ctx.info_name)
