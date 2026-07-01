@@ -275,7 +275,8 @@ class CmdResult:
         context_info: str | None = None,
         columns: tuple[str] | None = None,
         *,
-        sensitive_columns: tuple[str] | None = None
+        sensitive_columns: tuple[str] | None = None,
+        single_row: bool = False
     ) -> NoReturn:
         def _convert_val_as_str(val: Any) -> str:
             if isinstance(val, (dict, list)):
@@ -382,20 +383,28 @@ class CmdResult:
             else:
                 _print(data)
         elif fmt == Format.TABLE:
-            rows = data if isinstance(data, list) else [data]
-            rows = [r for r in rows if isinstance(r, dict)]
-            if rows:
+            if single_row and isinstance(data, dict):
                 table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
-
-                cols = list(rows[0].keys())
-                for c in cols:
-                    table.add_column(str(c), overflow="fold") # Fold helps if mucho text
-
-                for row in rows:
-                    table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+                table.add_column("Field", overflow="fold")
+                table.add_column("Value", overflow="fold")
+                for key, val in data.items():
+                    table.add_row(str(key), _render_table_cell(val))
                 _print(table)
-            elif data:
-                _print(data)
+            else:
+                rows = data if isinstance(data, list) else [data]
+                rows = [r for r in rows if isinstance(r, dict)]
+                if rows:
+                    table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
+
+                    cols = list(rows[0].keys())
+                    for c in cols:
+                        table.add_column(str(c), overflow="fold") # Fold helps if mucho text
+
+                    for row in rows:
+                        table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+                    _print(table)
+                elif data:
+                    _print(data)
         
         data_to_log = data
         if not LOGGER.disabled and sensitive_columns:
