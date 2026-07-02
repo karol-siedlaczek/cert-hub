@@ -111,3 +111,11 @@ def test_show_column_filter(monkeypatch):
     assert result.exit_code == 0, result.output
     parsed = json.loads(result.output)
     assert parsed == {"id": "siedlaczek.com.pl"}
+
+
+def test_show_dict_payload_is_critical_not_found(monkeypatch):
+    """A dict payload (unexpected envelope) must not crash; must exit 2 with 'not found'."""
+    payload = {"unexpected": "envelope"}
+    result = _show(monkeypatch, payload, "any.example")
+    assert result.exit_code == 2, result.output
+    assert "not found" in result.output.lower()

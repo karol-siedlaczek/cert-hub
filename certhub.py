@@ -790,7 +790,7 @@ def cert_show(
     sensitive_columns = ("certificate", "chain", "private_key")
 
     if response.ok:
-        certs = result.data
+        certs = result.data if isinstance(result.data, list) else []
         exact = [c for c in certs if c.get("id") == cert_id]
         matched = exact or certs
         if not matched:
@@ -801,7 +801,7 @@ def cert_show(
                 {
                     "id": cert_id,
                     "msg": f"Ambiguous id, matched {len(matched)} certs",
-                    "matched": [c["id"] for c in matched],
+                    "matched": [c.get("id") for c in matched],
                 },
                 ExitCode.CRITICAL,
             )
