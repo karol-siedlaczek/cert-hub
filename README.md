@@ -292,6 +292,7 @@ certhub
 │   └── gen-hmac                    Generate a TOKEN_<ID>_HMAC value for server configuration
 └── cert                            Manage certificates
     ├── list                        List certificates available for the identity or pattern
+    ├── show                        Show details for a single certificate
     ├── status                      Show statuses (expiring, not issued, etc.)
     ├── pem                         Print raw PEM material (bundle/cert/chain/privkey) for one certificate
     ├── issue                       Issue new certificates for the identity or pattern
@@ -328,6 +329,9 @@ certhub cert status --exclude-ok
 # Show cert information
 certhub cert list --pattern "example*"
 
+# Show details for a single certificate
+certhub cert show example
+
 # Print raw PEM for one certificate (default bundle; use --type cert|chain|privkey)
 certhub cert pem example > example.pem
 
@@ -352,6 +356,23 @@ certhub cert sync -d /etc/ssl/private --pem bundle --pem cert --pem privkey --po
 # Write cert and key with nginx-friendly extensions
 certhub cert sync -d /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
 ```
+
+`cert show <cert_id>` shows details for a single certificate. Unlike `cert list`, the default `table`
+format renders one record vertically as a `Field` / `Value` table:
+
+```
+$ certhub cert show siedlaczek.com.pl
+╭────────────┬─────────────────────╮
+│ Field      │ Value               │
+├────────────┼─────────────────────┤
+│ id         │ siedlaczek.com.pl   │
+│ status     │ OK                  │
+│ ...        │ ...                 │
+╰────────────┴─────────────────────╯
+```
+
+`--format json` prints a single object (`{}`), and `-c/--column` filters fields.
+An unknown id exits `CRITICAL` (code 2).
 
 `cert sync` writes PEM files controlled by the `-P/--pem` option (repeatable, default `bundle`). Accepted values:
 - `bundle` — certificate + chain + private key concatenated into one file
