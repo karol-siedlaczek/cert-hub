@@ -770,8 +770,48 @@ def cert_list(
             for col in sensitive_columns:
                 d.pop(col, None)
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
-    
-    
+
+
+@cert_app.command(name="show", help="Show details for a single certificate")
+def cert_show(
+    ctx: typer.Context,
+    cert_id: str = typer.Argument(..., help="Certificate id to show"),
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns(),
+    type: str = Opt.type(CertType.ALL),
+) -> None:
+    client = Client.init(ctx, format, timeout=timeout)
+    cert_type = CertType.from_string(type)
+    response = client.request(
+        "GET", "/api/certs", params={"match": [cert_id], "type": cert_type.value})
+
+    result = CmdResult.from_response(response)
+    sensitive_columns = ("certificate", "chain", "private_key")
+
+    if response.ok:
+        certs = result.data
+        exact = [c for c in certs if c.get("id") == cert_id]
+        matched = exact or certs
+        if not matched:
+            result = CmdResult.from_dict(
+                {"id": cert_id, "msg": "Certificate not found"}, ExitCode.CRITICAL)
+        elif len(matched) > 1:
+            result = CmdResult.from_dict(
+                {
+                    "id": cert_id,
+                    "msg": f"Ambiguous id, matched {len(matched)} certs",
+                    "matched": [c["id"] for c in matched],
+                },
+                ExitCode.CRITICAL,
+            )
+        else:
+            result.data = matched[0]
+
+    return result.render_and_exit(
+        ctx.info_name, columns, sensitive_columns=sensitive_columns, single_row=True)
+
+
 @cert_app.command(name = "sync", help="Sync local certificate files with the server: download and replace expiring, expired or missing certificates, and remove files for revoked ones")
 def cert_sync(
     ctx: typer.Context,
