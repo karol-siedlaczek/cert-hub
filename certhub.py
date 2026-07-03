@@ -57,22 +57,22 @@ class ExitCode(Enum):
     WARNING = 1
     CRITICAL = 2
     UNKNOWN = 3
-    
+
 
 class Format(Enum):
     TABLE = "table"
     JSON = "json"
     KEY_VALUE = "kv"
     VALUE = "value"
-    
+
     @classmethod
     def values(cls) -> list[str]:
         return [item.value for item in cls]
-    
+
     @classmethod
     def default(cls) -> "Format":
         return Format.TABLE
-    
+
     @classmethod
     def from_string(cls, val: str) -> "Format":
         try:
@@ -87,15 +87,15 @@ class PemType(Enum):
     CHAIN = "chain"
     BUNDLE = "bundle"
     FULLCHAIN = "fullchain"
-    
+
     @classmethod
     def values(cls) -> list[str]:
         return [item.value for item in cls]
-    
+
     @classmethod
     def default(cls) -> "PemType":
         return PemType.BUNDLE
-    
+
     @classmethod
     def from_string(cls, val: str, *, custom_msg_on_err: str = "") -> "PemType":
         try:
@@ -103,8 +103,8 @@ class PemType(Enum):
         except ValueError:
             msg = custom_msg_on_err if custom_msg_on_err else f"Unknown PEM type: {val}, must be one of: {(', ').join(PemType.values())}"
             raise typer.BadParameter(msg)
-    
-    
+
+
 class CertType(str, Enum):
     LETSENCRYPT = "letsencrypt"
     STATIC = "static"
@@ -113,7 +113,7 @@ class CertType(str, Enum):
     @classmethod
     def values(cls) -> list[str]:
         return [item.value for item in cls]
-    
+
     @classmethod
     def default(cls) -> "CertType":
         return CertType.ALL
@@ -169,6 +169,13 @@ class Opt:
             help=f"Filter by certificate type: {', '.join(CertType.values())}"
         )
 
+    @staticmethod
+    def long() -> Any:
+        return typer.Option(
+            None, "-l", "--long",
+            help="Add to output all fields returned by API"
+        )
+
 
 @dataclass
 class Settings:
@@ -183,21 +190,21 @@ class Settings:
 class CmdResult:
     data: dict | list[dict]
     exit_code: ExitCode
-    
+
     @classmethod
     def from_response(
         cls,
-        response: requests.Response, 
+        response: requests.Response,
         exit_code: ExitCode | None = None
     ) -> "CmdResult":
         data = cls._parse_response(response)
         exit_code = exit_code or (ExitCode.OK if response.ok else ExitCode.CRITICAL)
 
         return cls(data, exit_code)
-    
+
     @classmethod
     def from_dict(
-        cls, 
+        cls,
         data: dict | list[dict],
         exit_code: ExitCode | None = None
     ) -> "CmdResult":
@@ -216,15 +223,15 @@ class CmdResult:
         payload.pop("timestamp", None)
         if response.ok:
             payload = payload.get("data", payload)
-            
+
         return payload
-    
+
     def _filter_data(self, columns: tuple[str] | None = None) -> Any:
         if not columns:
             return self.data
 
         available_columns: set[str] = set()
-        
+
         if isinstance(self.data, dict):
             available_columns = set(self.data.keys())
         elif isinstance(self.data, list):
@@ -251,7 +258,7 @@ class CmdResult:
             return {col: self.data.get(col) for col in columns}
 
         return self.data
-    
+
     def _mask_sensitive(self, obj: Any, sensitive: set[str]) -> Any:
         if not sensitive:
             return obj
@@ -270,6 +277,15 @@ class CmdResult:
 
         return obj
 
+    def drop_columns(self, columns: tuple[str, ...]) -> None:
+        # Works for both a list-of-rows payload (e.g. /api/certs) and a single-row
+        # dict (e.g. cert show / status); non-dict rows are left untouched.
+        rows = self.data if isinstance(self.data, list) else [self.data]
+        for d in rows:
+            if isinstance(d, dict):
+                for col in columns:
+                    d.pop(col, None)
+
     def render_and_exit(
         self,
         context_info: str | None = None,
@@ -287,7 +303,7 @@ class CmdResult:
             key_as_str = str(key)
             val_as_str = _convert_val_as_str(val)
             return f"{key_as_str:<{key_width}} = {val_as_str}"
-        
+
         def _render_table_cell(value) -> str:
             def format_kv_block(obj: dict, indent: str = "  ") -> str:
                 key_width = max((len(str(k)) for k in obj.keys()), default=0)
@@ -300,7 +316,7 @@ class CmdResult:
                         v_str = str(v)
                     lines.append(f"{indent}{str(k):<{key_width}} = {v_str}")
                 return "\n".join(lines)
-            
+
             if value is None:
                 return "-"
 
@@ -341,11 +357,11 @@ class CmdResult:
                 console.print(value, style="red", markup=False, highlight=False)
                 return
             console.print(value, style="red", highlight=False)
-        
+
         data = self._filter_data(columns) if self.exit_code == ExitCode.OK else self.data
         settings = get_ctx_settings()
         fmt = settings.format
-        
+
         if fmt == Format.JSON:
             _print(json.dumps(data, indent=2, ensure_ascii=False))
         elif fmt == Format.VALUE:
@@ -367,11 +383,11 @@ class CmdResult:
                 key_width = max((len(str(key)) for key in data.keys()), default=0)
                 for key, val in data.items():
                     _print(_render_field(key, val, key_width))
-                    
+
             elif isinstance(data, list):
                 if all(isinstance(item, dict) for item in data):
                     key_width = max((len(str(key)) for item in data for key in item.keys()), default=0)
-                    
+
                     for item in data:
                         for key, val in item.items():
                             _print(_render_field(key, val, key_width))
@@ -405,11 +421,11 @@ class CmdResult:
                     _print(table)
                 elif data:
                     _print(data)
-        
+
         data_to_log = data
         if not LOGGER.disabled and sensitive_columns:
             data_to_log = self._mask_sensitive(data, sensitive_columns)
-            
+
         LOGGER.log(
             logging.INFO if self.exit_code == ExitCode.OK else logging.ERROR,
             f"{f"Result for {context_info} command: " if context_info else ""}{data_to_log}"
@@ -422,7 +438,7 @@ class Client():
     base_url: str
     session: requests.Session
     timeout: int
-    
+
     @classmethod
     def init(
         cls,
@@ -434,7 +450,7 @@ class Client():
         settings = load_settings(ctx, fmt)
         base_url = settings.api_url.rstrip("/")
         session = requests.Session()
-        
+
         if settings.token:
             session.headers.update({"Authorization": f"Bearer {settings.token}"})
 
@@ -443,19 +459,19 @@ class Client():
             session.request("GET", f"{base_url}/ping", timeout=10)
         except requests.RequestException as e:
             payload = {
-                "msg": "Error connecting to API server", 
+                "msg": "Error connecting to API server",
                 "error": str(e)
             }
             result = CmdResult.from_dict(payload, ExitCode.CRITICAL)
             return result.render_and_exit()
-            
+
         return cls(base_url, session, timeout or 10)
-    
+
     def request(
-        self, 
-        method: str, 
-        path: str, 
-        *, 
+        self,
+        method: str,
+        path: str,
+        *,
         params: Optional[Dict[str, Any]] = None,
         json_body: Optional[Dict[str, Any]] = None,
     ) -> requests.Response:
@@ -498,7 +514,7 @@ def main(
     )
 ) -> None:
     ctx.obj = Settings(api_url=api_url, token=token, log_file=log_file, log_level=log_level, format=None)
-    
+
 
 @app.command(help="Versions and author")
 def version(
@@ -522,7 +538,7 @@ def reload(
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     response = client.request("POST", "/api/admin/reload")
-    
+
     if response.ok:
         typer.secho("Success!", fg=typer.colors.GREEN)
         typer.echo(response.json().get("message"))
@@ -544,8 +560,8 @@ def token_scope(
     response = client.request("GET", "/api/token/scope")
     result = CmdResult.from_response(response)
     return result.render_and_exit(ctx.info_name, columns)
-    
-    
+
+
 @token_app.command(name = "identity", help="Current identity (allowed CIDRs, permissions)")
 def token_identity(
     ctx: typer.Context,
@@ -556,13 +572,13 @@ def token_identity(
     client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/token/identity")
     result = CmdResult.from_response(response)
-    
+
     if isinstance(result.data, dict) and result.data.get("permissions"):
         result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
     return result.render_and_exit(ctx.info_name, columns)
 
 
-@token_app.command(name="gen-hmac", help="Generate TOKEN_<ID>_HMAC for server configuration") 
+@token_app.command(name="gen-hmac", help="Generate TOKEN_<ID>_HMAC for server configuration")
 def token_gen_hmac(
     hmac_key_b64: str = typer.Option(
         None, "--hmac-key-b64",
@@ -583,13 +599,13 @@ def token_gen_hmac(
         hmac_key_b64 = getpass("HMAC key (base64): ").strip()
     if token_value is None:
         t1, t2 = getpass("Token value: ").strip(), getpass("Confirm token value: ").strip()
-        
+
         if t1 != t2:
             raise typer.BadParameter("Token values do not match")
         if not t1:
             raise typer.BadParameter("Token value cannot be empty")
         token_value = t1
-        
+
     try:
         hmac_key = base64.b64decode(hmac_key_b64, validate=True)
     except binascii.Error:
@@ -599,7 +615,7 @@ def token_gen_hmac(
             "  openssl rand -base64 32\n\n"
             "NOTE !!!\nHMAC key must match server HMAC_KEY_B64"
         )
-    
+
     if len(hmac_key) < 32:
         raise typer.BadParameter(
             "Invalid HMAC key: decoded key must be at least 32 bytes.\n"
@@ -610,7 +626,7 @@ def token_gen_hmac(
 
     token = str(token_value).encode()
     digest = hmac.new(hmac_key, token, hashlib.sha256).hexdigest()
-    
+
     typer.secho("\nSuccess!\n", fg=typer.colors.GREEN)
     print("Add the following environment variable to the server:")
     print(f"TOKEN_{token_id.upper()}_HMAC={digest}\n")
@@ -640,13 +656,13 @@ def cert_status(
         "type": cert_type.value,
     }
     response = client.request("GET", "/api/certs/status", params=params)
-    
+
     result = CmdResult.from_response(response)
     if result.data.get("certs"):
-        result.data = result.data["certs"] 
-    
+        result.data = result.data["certs"]
+
     return result.render_and_exit(ctx.info_name, columns)
-    
+
 
 @cert_app.command(name = "issue", help="Issue new certificates for the current identity or selected pattern")
 def cert_issue(
@@ -661,7 +677,7 @@ def cert_issue(
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
     cert_ids = resolve_cert_ids(client, permission="issue", patterns=patterns, cert_type=cert_type.value)
-    
+
     rows, exit_code = fanout_certs(client, cert_ids, "issue", force=force)
     return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
 
@@ -679,10 +695,11 @@ def cert_renew(
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
     cert_ids = resolve_cert_ids(client, permission="renew", patterns=patterns, cert_type=cert_type.value)
-    
+
     rows, exit_code = fanout_certs(client, cert_ids, "renew", force=force)
+
     return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
-    
+
 
 @cert_app.command(name="revoke", help="Revoke certificates for the current identity or selected pattern (irreversible)")
 def cert_revoke(
@@ -749,10 +766,7 @@ def cert_list(
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
-    long: bool = typer.Option(
-        None, "-l", "--long",
-        help="Add to output sensitive data like certificate, chain and private key"
-    ),
+    long: bool = Opt.long(),
     type: str = Opt.type(),
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
@@ -763,12 +777,11 @@ def cert_list(
     }
     response = client.request("GET", "/api/certs", params=params)
     sensitive_columns = ("certificate", "chain", "private_key")
-    
+    long_columns = ("msg", "domains", "custom_attrs")
+
     result = CmdResult.from_response(response)
     if not long and response.ok:
-        for d in result.data:
-            for col in sensitive_columns:
-                d.pop(col, None)
+        result.drop_columns(sensitive_columns + long_columns)
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
 
 
@@ -779,12 +792,15 @@ def cert_show(
     timeout: int = Opt.timeout(),
     format: str = Opt.format(),
     columns: list[str] = Opt.columns(),
-    type: str = Opt.type(CertType.ALL),
+    type: str = Opt.type(CertType.ALL)
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
-    response = client.request(
-        "GET", "/api/certs", params={"match": [cert_id], "type": cert_type.value})
+    params = {
+        "match": [cert_id],
+        "type": cert_type.value
+    }
+    response = client.request("GET", "/api/certs", params=params)
 
     result = CmdResult.from_response(response)
     sensitive_columns = ("certificate", "chain", "private_key")
@@ -801,15 +817,14 @@ def cert_show(
                 {
                     "id": cert_id,
                     "msg": f"Ambiguous id, matched {len(matched)} certs",
-                    "matched": [c.get("id") for c in matched],
+                    "matched": [c.get("id") for c in matched]
                 },
-                ExitCode.CRITICAL,
+                ExitCode.CRITICAL
             )
         else:
             result.data = matched[0]
 
-    return result.render_and_exit(
-        ctx.info_name, columns, sensitive_columns=sensitive_columns, single_row=True)
+    return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns, single_row=True)
 
 
 @cert_app.command(name = "sync", help="Sync local certificate files with the server: download and replace expiring, expired or missing certificates, and remove files for revoked ones")
@@ -819,8 +834,8 @@ def cert_sync(
     format: str = Opt.format(),
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
-    dest_dir: str = typer.Option(
-        ..., "--dest-dir", "-d",
+    dest_dir: str = typer.Argument(
+        ...,
         help="Directory containing certificate files to check and update"
     ),
     pem: list[str] = typer.Option(
@@ -836,10 +851,6 @@ def cert_sync(
     post_hook: str = typer.Option(
         None, "--post-hook",
         help="Executable to run after successful update of any locally expiring or expired certificate"
-    ),
-    omit_post_hook_on_revoke: bool = typer.Option(
-        False, "--omit-post-hook-on-revoke",
-        help="Do not let revoked cert cleanup trigger --post-hook (cleanup still happens and is reported)"
     ),
     owner: str = typer.Option(
         None, "--owner", "-O",
@@ -858,6 +869,16 @@ def cert_sync(
         help="Path to a JSON file to write after the run, capturing the iteration status: the rendered result "
             "(same data shown on the console), the overall exit_code and the message. "
             "Written on every outcome (success, fetch failure, post-hook failure). Parent directories are created if missing."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Report what would be added, updated or removed without writing PEM files, "
+             "deleting anything, or updating the sync state file"
+    ),
+    omit_post_hook_on_cleanup: bool = typer.Option(
+        False, "--omit-post-hook-on-cleanup",
+        help="Do not let local cleanup (revoked certs, or certs the server no longer returns) "
+             "trigger --post-hook (cleanup still happens and is reported)"
     ),
     type: str = Opt.type()
 ) -> None:
@@ -881,21 +902,25 @@ def cert_sync(
                 "updated": self.updated,
                 "msg": self.msg
             }
-            
+
     try:
         chmod_mode = int(chmod, 8)
     except ValueError:
         raise typer.BadParameter(f"Invalid --chmod value '{chmod}', must be an octal number (e.g. 600, 640, 644)")
-    
+
     pem_types = parse_pem_types(pem)
     ext_map = parse_pem_extensions(ext, pem_types)
     certs_dir = Path(dest_dir)
-    
+
     if not certs_dir.exists():
-        raise typer.BadParameter(f"Directory provided by -d/--dest-dir does not exist: {certs_dir}")
+        raise typer.BadParameter(f"Directory (DEST_DIR argument) does not exist: {certs_dir}")
     if not certs_dir.is_dir():
-        raise typer.BadParameter(f"Value provided by -d/--dest-dir is not a directory: {certs_dir}")
-    
+        raise typer.BadParameter(f"Value (DEST_DIR argument) is not a directory: {certs_dir}")
+
+    state_path = certs_dir / SYNC_STATE_FILENAME
+    prior_state = load_sync_state(state_path)
+    prior_certs = prior_state.get("certs") or []
+
     cert_type = CertType.from_string(type)
     params = {
         **({"match": patterns} if patterns else {}),
@@ -905,14 +930,21 @@ def cert_sync(
     client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/certs", params=params)
     result = CmdResult.from_response(response)
-    
+
     if not response.ok:
-        if status_file:
+        if status_file and not dry_run:
             fetch_msg = f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}"
             write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, fetch_msg)
         result.render_and_exit(ctx.info_name)
-    
+
     results: list[CertUpdateResult] = []
+
+    # (cert_id, pem_files) for every cert whose files were materialised (added,
+    # updated, or already up to date) — used to build the sync state file.
+    materialized: list[tuple[str, list[Path]]] = []
+
+    response_ids = {c.get("id") for c in result.data}
+    response_status = {c.get("id"): c.get("status") for c in result.data}
 
     for cert in result.data:
         cert_id = cert.get("id")
@@ -938,20 +970,9 @@ def cert_sync(
         private_key = cert.get("private_key")
 
         if cert.get("status") == "REVOKED":
-            removed = []
-            for pem_file in pem_files:
-                if pem_file.exists():
-                    pem_file.unlink()
-                    removed.append(pem_file.name)
-            results.append(CertUpdateResult(
-                cert=cert_id,
-                code=ExitCode.OK,
-                pem_files=pem_files,
-                remote_expire_date=None,
-                local_expire_date=None,
-                updated=bool(removed) and not omit_post_hook_on_revoke,
-                msg=(f"Revoked on server; removed local files: {', '.join(removed)}" if removed else "Revoked on server; no local files to remove")
-            ))
+            # Revoked certs are cleaned up by the unified prune pass below (same path
+            # as certs the server no longer returns). Skip here so the cert is not
+            # written or materialised, and drops out of the state file.
             continue
 
         if "certificate" in fields and not certificate:
@@ -1024,12 +1045,14 @@ def cert_sync(
                 remote_expire_date=expire_date, local_expire_date=local_expire_date, updated=False,
                 msg="Up to date"
             ))
+            materialized.append((cert_id, pem_files))
             continue
 
         # Add or update local certificate files
-        for pem_type, pem_file in zip(pem_types, pem_files):
-            content = pem_content_for(pem_type, certificate, chain, private_key)
-            _write_secure(pem_file, content, mode=chmod_mode, owner=owner, group=group)
+        if not dry_run:
+            for pem_type, pem_file in zip(pem_types, pem_files):
+                content = pem_content_for(pem_type, certificate, chain, private_key)
+                _write_secure(pem_file, content, mode=chmod_mode, owner=owner, group=group)
 
         # Report the freshly written cert's expiry: keep the pre-write local date when
         # we had one (an existing cert being replaced), otherwise read it back from the
@@ -1040,15 +1063,85 @@ def cert_sync(
             except Exception:
                 local_expire_date = None
 
+        if dry_run:
+            msg = "Would update" if existed_before else "Would add"
+        else:
+            msg = "Updated" if existed_before else "Added"
         results.append(CertUpdateResult(
             cert=cert_id, code=ExitCode.OK, pem_files=pem_files,
-            remote_expire_date=expire_date, local_expire_date=local_expire_date, updated=True,
-            msg="Updated" if existed_before else "Added"
+            remote_expire_date=expire_date, local_expire_date=local_expire_date,
+            updated=not dry_run, msg=msg
+        ))
+        materialized.append((cert_id, pem_files))
+
+    current_filter = state_filter_obj(patterns, cert_type.value)
+    stale_ids = [c.get("id") for c in prior_certs if c.get("id") not in response_ids]
+
+    if stale_ids and prior_state.get("filter") not in (None, current_filter):
+        LOGGER.warning(
+            f"Sync filter changed since last run (was {prior_state.get('filter')}, now {current_filter}); "
+            f"certificates no longer matching the filter will be removed: {', '.join(stale_ids)}"
+        )
+        results.append(CertUpdateResult(
+            cert="(sync filter changed)",
+            code=ExitCode.WARNING,
+            pem_files=[],
+            remote_expire_date=None,
+            local_expire_date=None,
+            updated=False,
+            msg=(f"Filter changed since last run (was {prior_state.get('filter')}, now {current_filter}); "
+                 f"certificates no longer matching the filter will be removed: {', '.join(stale_ids)}"),
         ))
 
-    is_any_updated = any(r.updated for r in results)        
-    
-    if is_any_updated and post_hook:
+    # Note: if a pruned cert and a currently-synced cert resolve to the same
+    # <prefix>_<type> filename with identical content, the checksum matches and the
+    # just-written file is removed here; it is re-created and re-recorded next run.
+    for prior_cert in prior_certs:
+        prior_id = prior_cert.get("id")
+        revoked = response_status.get(prior_id) == "REVOKED"
+
+        # Clean up a tracked cert only when it disappeared from the response OR is
+        # revoked. A cert still returned with any other (error) status keeps its files.
+        if prior_id in response_ids and not revoked:
+            continue
+        removed, mismatched = [], []
+        # Guard against a JSON-valid but structurally broken state entry: skip file
+        # records with no "file" key (certs_dir / "" would resolve to the directory itself).
+        file_entries = [e for e in prior_cert.get("files", []) if e.get("file")]
+        prune_files = [certs_dir / e["file"] for e in file_entries]
+
+        for pem_file, entry in zip(prune_files, file_entries):
+            if not pem_file.exists():
+                continue
+            if sha256_file(pem_file) != entry.get("sha256"):
+                mismatched.append(pem_file.name)
+                continue
+            if not dry_run:
+                pem_file.unlink()
+            removed.append(pem_file.name)
+        if not removed and not mismatched:
+            continue  # nothing left on disk; the cert simply drops from the new state
+        verb = "would remove" if dry_run else "removed"
+        parts = []
+
+        if removed:
+            parts.append(f"{verb} files: {', '.join(removed)}")
+        if mismatched:
+            parts.append(f"skipped (checksum mismatch): {', '.join(mismatched)}")
+        reason = "Revoked on server" if revoked else "No longer returned by server"
+        results.append(CertUpdateResult(
+            cert=prior_id,
+            code=ExitCode.WARNING if mismatched else ExitCode.OK,
+            pem_files=prune_files,
+            remote_expire_date=None,
+            local_expire_date=None,
+            updated=bool(removed) and not omit_post_hook_on_cleanup and not dry_run,
+            msg=f"{reason}; " + "; ".join(parts),
+        ))
+
+    is_any_updated = any(r.updated for r in results)
+
+    if is_any_updated and post_hook and not dry_run:
         result = run_cmd(post_hook, shell=True)
         if result.returncode != 0:
             data = {
@@ -1060,10 +1153,26 @@ def cert_sync(
             }
             result = CmdResult.from_dict(data, ExitCode.CRITICAL)
             hook_msg = f"{ExitCode.CRITICAL.name}: {data['msg']}, synced certs: {data['synced_certs']}, error: {data['error']}"
-            if status_file:
+            if status_file and not dry_run:
                 write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, hook_msg)
             return result.render_and_exit(ctx.info_name)
-    
+
+    if not dry_run:
+        current_certs = []
+        for cert_id, pem_files in materialized:
+            file_entries = [
+                {"file": p.name, "sha256": sha256_file(p)}
+                for p in pem_files if p.exists()
+            ]
+            if file_entries:
+                current_certs.append({"id": cert_id, "files": file_entries})
+        write_sync_state(
+            certs_dir / SYNC_STATE_FILENAME,
+            state_filter_obj(patterns, cert_type.value),
+            current_certs,
+            datetime.now(timezone.utc),
+        )
+
     result = CmdResult.from_dict([r.to_serializable() for r in results], ExitCode.OK)
     highest_exit_code = max((r.code for r in results), key=lambda code: code.value, default=ExitCode.OK)
 
@@ -1073,30 +1182,30 @@ def cert_sync(
         failed = [r for r in results if r.code != ExitCode.OK]
         status_msg = f"{highest_exit_code.name}: Following certs returned error: {(', ').join([f"{r.cert} ({r.msg})" for r in failed])}"
 
-    if status_file:
+    if status_file and not dry_run:
         write_status_file(Path(status_file), result.data, highest_exit_code, status_msg)
 
     return result.render_and_exit(ctx.info_name, columns)
-    
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
 def resolve_cert_ids(client: "Client", *, permission: str, patterns: list[str], cert_type: str | None = None) -> list[str]:
     params: dict[str, Any] = {"permission": permission}
-    
+
     if patterns:
         params["match"] = patterns
     if cert_type and cert_type != "all":
         params["type"] = cert_type
-        
+
     response = client.request("GET", "/api/certs/catalog", params=params)
     if not response.ok:
         CmdResult.from_response(response).render_and_exit()
-        
+
     payload = response.json().get("data", [])
     cert_ids = [entry["id"] for entry in payload]
-    
+
     if not cert_ids:
         data: dict[str, Any] = {
             "msg": f"No certificate found that the current identity is allowed to {permission}",
@@ -1113,7 +1222,7 @@ def resolve_cert_ids(client: "Client", *, permission: str, patterns: list[str], 
 def fanout_certs(client: "Client", cert_ids: list[str], action: str, *, force: bool = False) -> tuple[list[dict], ExitCode]:
     rows: list[dict] = []
     exit_code = ExitCode.OK
-    
+
     for cert_id in cert_ids:
         params = {"force": "true"} if force else {}
         response = client.request("POST", f"/api/certs/{cert_id}/{action}", params=params)
@@ -1187,7 +1296,7 @@ def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
     settings = ctx.obj
     if not isinstance(settings, Settings):
         raise typer.Exit(code=2)
-    
+
     file_settings: dict[str, str] = {}
     if SETTINGS_FILE.exists():
         file_mode = SETTINGS_FILE.stat().st_mode & 0o777
@@ -1215,7 +1324,7 @@ def load_settings(ctx: typer.Context, format: str | None = None) -> Settings:
 
     setup_logging(settings.log_file, settings.log_level)
     settings.format = Format.from_string(format)
-    
+
     if not settings.api_url:
         raise typer.BadParameter(
             f"Provide --api-url, set {ENV_VAR_API_URL} environment variable, or add API_URL=<value> in {SETTINGS_FILE}"
@@ -1238,19 +1347,19 @@ def get_cert_expire_date(cert_file: Path) -> datetime:
     cert_end = pem_content.find(end_marker, cert_start)
     if cert_start == -1 or cert_end == -1:
         raise ValueError(f"File '{cert_file}' does not contain a valid PEM certificate block")
-    
+
     cert_end += len(end_marker)
     cert_pem = pem_content[cert_start:cert_end].encode("utf-8")
-    
+
     try:
         cert = x509.load_pem_x509_certificate(cert_pem)
     except ValueError as e:
         raise ValueError(f"Cannot parse certificate from file '{cert_file}': {e}")
-    
+
     expire_date_utc = getattr(cert, "not_valid_after_utc", None)
     if expire_date_utc is not None:
         return expire_date_utc.astimezone(timezone.utc)
-    
+
     expire_date = cert.not_valid_after
     if expire_date.tzinfo is None:
         expire_date = expire_date.replace(tzinfo=timezone.utc)
@@ -1277,7 +1386,7 @@ def parse_pem_extensions(values: list[str], pem_types: list["PemType"]) -> dict[
             raise typer.BadParameter(f"Invalid --ext entry '{value}', expected form type=ext")
         raw_type, raw_ext = value.split("=", 1)
         pem_type = PemType.from_string(
-            raw_type.strip(), 
+            raw_type.strip(),
             custom_msg_on_err=f"Unknown --ext entry: {raw_type}={raw_ext}, part before '=' must be one of: {(', ').join(PemType.values())}"
         )
         ext = raw_ext.strip()
@@ -1393,6 +1502,53 @@ def write_status_file(path: Path, data: Any, exit_code: ExitCode, message: str) 
         LOGGER.error(f"Failed to write status file '{path}': {safe_str(e)}")
 
 
+SYNC_STATE_FILENAME = ".certhub-sync-state.json"
+
+
+def sha256_file(path: Path) -> str:
+    # Hash the raw bytes on disk so it matches for both freshly written PEM files
+    # and pre-existing ("up to date") ones.
+    h = hashlib.sha256()
+    h.update(path.read_bytes())
+    return h.hexdigest()
+
+
+def state_filter_obj(patterns: list[str] | None, cert_type: str) -> dict:
+    # Recorded informationally in the state file; patterns sorted for a stable,
+    # order-independent comparison against the previous run's filter. The
+    # --pattern option defaults to None, so coalesce to an empty list.
+    return {"type": cert_type, "patterns": sorted(patterns or [])}
+
+
+def load_sync_state(path: Path) -> dict:
+    # Read the persisted sync state. A missing or unparseable file is treated as
+    # "no prior state" (empty) rather than aborting the run.
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="UTF-8"))
+    except (OSError, ValueError) as e:
+        LOGGER.warning(f"Failed to read sync state file '{path}', treating as empty: {safe_str(e)}")
+        return {}
+
+
+def write_sync_state(path: Path, filter_obj: dict, certs: list[dict], timestamp: datetime) -> None:
+    # Persist the certs (and their file checksums) materialised this run so the
+    # next run can detect and clean up ones the server no longer returns. Failure
+    # to write is logged but does not abort — the certificate files are already on disk.
+    payload = {
+        "version": 1,
+        "filter": filter_obj,
+        "timestamp": timestamp,
+        "certs": certs,
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=_json_default) + "\n", encoding="UTF-8")
+    except OSError as e:
+        LOGGER.error(f"Failed to write sync state file '{path}': {safe_str(e)}")
+
+
 def _json_default(o: object) -> str:
     # json.dumps cannot serialize datetime/date objects (e.g. the run timestamp and
     # any cert expiry dates carried in the result data); render them as ISO 8601 strings.
@@ -1422,12 +1578,12 @@ def run_cmd(
             cmd = shlex.split(args)
         else:
             cmd = [str(a) for a in args]
-    
+
     result = subprocess.run(
         cmd,
-        stdin=subprocess.DEVNULL, 
-        stderr=subprocess.PIPE, 
-        stdout=subprocess.PIPE, 
+        stdin=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
         text=True,
         shell=shell,
         executable="/bin/bash",
