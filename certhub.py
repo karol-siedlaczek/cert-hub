@@ -275,7 +275,8 @@ class CmdResult:
         context_info: str | None = None,
         columns: tuple[str] | None = None,
         *,
-        sensitive_columns: tuple[str] | None = None
+        sensitive_columns: tuple[str] | None = None,
+        single_row: bool = False
     ) -> NoReturn:
         def _convert_val_as_str(val: Any) -> str:
             if isinstance(val, (dict, list)):
@@ -382,20 +383,28 @@ class CmdResult:
             else:
                 _print(data)
         elif fmt == Format.TABLE:
-            rows = data if isinstance(data, list) else [data]
-            rows = [r for r in rows if isinstance(r, dict)]
-            if rows:
+            if single_row and isinstance(data, dict):
                 table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
-
-                cols = list(rows[0].keys())
-                for c in cols:
-                    table.add_column(str(c), overflow="fold") # Fold helps if mucho text
-
-                for row in rows:
-                    table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+                table.add_column("Field", overflow="fold")
+                table.add_column("Value", overflow="fold")
+                for key, val in data.items():
+                    table.add_row(str(key), _render_table_cell(val))
                 _print(table)
-            elif data:
-                _print(data)
+            else:
+                rows = data if isinstance(data, list) else [data]
+                rows = [r for r in rows if isinstance(r, dict)]
+                if rows:
+                    table = Table(show_header=True, header_style="bold", expand=True, show_lines=True, box=box.ROUNDED)
+
+                    cols = list(rows[0].keys())
+                    for c in cols:
+                        table.add_column(str(c), overflow="fold") # Fold helps if mucho text
+
+                    for row in rows:
+                        table.add_row(*[_render_table_cell(row.get(c, "")) for c in cols])
+                    _print(table)
+                elif data:
+                    _print(data)
         
         data_to_log = data
         if not LOGGER.disabled and sensitive_columns:
@@ -761,8 +770,48 @@ def cert_list(
             for col in sensitive_columns:
                 d.pop(col, None)
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
-    
-    
+
+
+@cert_app.command(name="show", help="Show details for a single certificate")
+def cert_show(
+    ctx: typer.Context,
+    cert_id: str = typer.Argument(..., help="Certificate id to show"),
+    timeout: int = Opt.timeout(),
+    format: str = Opt.format(),
+    columns: list[str] = Opt.columns(),
+    type: str = Opt.type(CertType.ALL),
+) -> None:
+    client = Client.init(ctx, format, timeout=timeout)
+    cert_type = CertType.from_string(type)
+    response = client.request(
+        "GET", "/api/certs", params={"match": [cert_id], "type": cert_type.value})
+
+    result = CmdResult.from_response(response)
+    sensitive_columns = ("certificate", "chain", "private_key")
+
+    if response.ok:
+        certs = result.data if isinstance(result.data, list) else []
+        exact = [c for c in certs if c.get("id") == cert_id]
+        matched = exact or certs
+        if not matched:
+            result = CmdResult.from_dict(
+                {"id": cert_id, "msg": "Certificate not found"}, ExitCode.CRITICAL)
+        elif len(matched) > 1:
+            result = CmdResult.from_dict(
+                {
+                    "id": cert_id,
+                    "msg": f"Ambiguous id, matched {len(matched)} certs",
+                    "matched": [c.get("id") for c in matched],
+                },
+                ExitCode.CRITICAL,
+            )
+        else:
+            result.data = matched[0]
+
+    return result.render_and_exit(
+        ctx.info_name, columns, sensitive_columns=sensitive_columns, single_row=True)
+
+
 @cert_app.command(name = "sync", help="Sync local certificate files with the server: download and replace expiring, expired or missing certificates, and remove files for revoked ones")
 def cert_sync(
     ctx: typer.Context,
