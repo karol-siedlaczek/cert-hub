@@ -298,7 +298,7 @@ certhub
     ├── issue                       Issue new certificates for the identity or pattern
     ├── renew                       Renew existing certificates for the identity or pattern
     ├── revoke                      Revoke one or more certificates (requires confirmation)
-    └── sync                        Sync local certificate files with the server (replace expiring/expired/missing, remove revoked)
+    └── sync                        Sync local certificate files with the server (replace expiring/expired/missing, remove revoked and no-longer-accessible)
 ```
 
 Run `certhub --help`, or `certhub <group> --help` / `certhub <group> <command> --help`, to see all options for each command.
@@ -348,13 +348,16 @@ certhub cert revoke --pattern "example"
 certhub cert revoke --pattern "example" --yes-i-really-mean-it
 
 # Sync locally stored cert files with the server if it has a newer version
-certhub cert sync --dest-dir /etc/ssl/private --post-hook "systemctl reload nginx"
+certhub cert sync /etc/ssl/private --post-hook "systemctl reload nginx"
 
 # Write a deploy bundle plus standalone cert and key files
-certhub cert sync -d /etc/ssl/private --pem bundle --pem cert --pem privkey --post-hook "systemctl reload nginx"
+certhub cert sync /etc/ssl/private --pem bundle --pem cert --pem privkey --post-hook "systemctl reload nginx"
 
 # Write cert and key with nginx-friendly extensions
-certhub cert sync -d /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
+certhub cert sync /etc/ssl/private --pem cert --pem privkey --ext cert=crt --ext privkey=key --post-hook "systemctl reload nginx"
+
+# Preview what would change without writing, deleting, or updating state
+certhub cert sync /etc/ssl/private --dry-run
 ```
 
 `cert show <cert_id>` shows details for a single certificate. Unlike `cert list`, the default `table`
@@ -380,7 +383,7 @@ An unknown id exits `CRITICAL` (code 2).
 - `chain` — chain/CA bundle only
 - `privkey` — private key only
 
-Each requested type produces a separate file named `<prefix>_<type>.pem` (extension configurable via `--ext`, see below) inside `--dest-dir`, where `<prefix>` is taken from the certificate's `pem_prefix` custom attr (see Configuration) or falls back to the cert id.
+Each requested type produces a separate file named `<prefix>_<type>.pem` (extension configurable via `--ext`, see below) inside the destination directory (the positional `DEST_DIR` argument), where `<prefix>` is taken from the certificate's `pem_prefix` custom attr (see Configuration) or falls back to the cert id.
 
 The `--ext` option (repeatable, form `type=ext`) overrides the file extension for a given PEM type. The default extension is `.pem` for every type; omitting `--ext` produces behaviour identical to previous releases. Example:
 
@@ -390,9 +393,15 @@ The `--ext` option (repeatable, form `type=ext`) overrides the file extension fo
 
 produces `<prefix>_cert.crt` and `<prefix>_privkey.key` instead of the default `.pem` files. This is useful for web servers like nginx or Apache that key off the file extension. HAProxy ignores the extension and parses PEM content directly — use `bundle` as the type for HAProxy's `crt` directive; `--ext` is not needed there.
 
-If the server reports a certificate's status as `REVOKED`, `cert sync` removes all matching local `<prefix>_<type>.<ext>` files (where `<ext>` is `.pem` by default or whatever was set via `--ext`). This counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-revoke` is passed.
+`cert sync` maintains a `.certhub-sync-state.json` file in the destination directory recording each certificate it materialised (wrote, or confirmed already up to date) and the `sha256` of every file it wrote. This state drives a single, unified cleanup pass: on each run, any certificate recorded there but **no longer synced** — because the server reports it `REVOKED`, the identity lost access to it, or a narrower `--pattern`/`--type` filter now excludes it — has its recorded files removed. Revoked certificates and certificates that simply vanished from the response are handled by the same path.
 
-The `--status-file <path>` option writes a JSON summary of the run after it completes, useful for monitoring or automation. It is written on every outcome (success, certificate-fetch failure, post-hook failure); parent directories are created if missing. The file contains:
+Before deleting a file, its on-disk checksum is compared against the recorded one; on a mismatch (the file was modified outside `cert sync`) the file is left untouched and the run reports `WARNING`. Because cleanup is checksum-guarded against the state file, only files that `cert sync` itself wrote and still tracks are ever removed — a revoked or vanished certificate whose files were placed out-of-band, or whose state entry is missing, is left alone. Cleanup counts as a change and triggers `--post-hook` unless `--omit-post-hook-on-cleanup` is passed. A certificate still returned by the server with a non-`REVOKED` error status (e.g. not yet issued) keeps its local files.
+
+If the filter changed since the previous run, the certificates dropped by the new filter are cleaned up as above; the run reports a `WARNING` — both as a row in the result (so `--status-file` and monitoring see it) and in the log — naming them so the change is visible.
+
+Use `--dry-run` to preview a run: it reports what would be added, updated, or removed (rows read "Would add" / "would remove") and makes **no changes at all** — no PEM file is written, nothing is deleted, and neither the state file nor the `--status-file` is updated.
+
+The `--status-file <path>` option writes a JSON summary of the run after it completes, useful for monitoring or automation. It is written on every real outcome (success, certificate-fetch failure, post-hook failure) but never under `--dry-run`; parent directories are created if missing. The file contains:
 
 ```json
 {
