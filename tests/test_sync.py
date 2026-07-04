@@ -642,6 +642,121 @@ def test_untracked_revoked_cert_not_removed(tmp_path, monkeypatch):
     assert bundle.exists()  # untracked -> unified cleanup does not touch it
 
 
+def test_pem_type_removed_prunes_orphan_file(tmp_path, monkeypatch):
+    """Dropping a PEM type between runs removes the now-orphaned file (true sync)."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                      expire_date=not_after.strftime(DATE_FMT))
+    # First run: three files for the same cert.
+    _invoke(tmp_path, ["-P", "cert", "-P", "bundle", "-P", "privkey"], [cert], monkeypatch)
+    cert_f = tmp_path / "mycert_cert.pem"
+    bundle_f = tmp_path / "mycert_bundle.pem"
+    privkey_f = tmp_path / "mycert_privkey.pem"
+    assert cert_f.exists() and bundle_f.exists() and privkey_f.exists()
+
+    # Second run: privkey dropped from --pem -> its file is pruned, the rest kept.
+    result = _invoke(tmp_path, ["-P", "cert", "-P", "bundle"], [cert], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert cert_f.exists()
+    assert bundle_f.exists()
+    assert not privkey_f.exists()
+    state = json.loads((tmp_path / ".certhub-sync-state.json").read_text())
+    files = {e["file"] for e in state["certs"][0]["files"]}
+    assert files == {"mycert_cert.pem", "mycert_bundle.pem"}
+
+
+def test_ext_change_prunes_old_extension(tmp_path, monkeypatch):
+    """Changing an extension between runs removes the old-extension file."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                      expire_date=not_after.strftime(DATE_FMT))
+    _invoke(tmp_path, ["-P", "cert"], [cert], monkeypatch)  # writes mycert_cert.pem
+    old = tmp_path / "mycert_cert.pem"
+    assert old.exists()
+
+    # Second run: same type, new extension -> new file written, old-ext file pruned.
+    result = _invoke(tmp_path, ["-P", "cert", "--ext", "cert=crt"], [cert], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    new = tmp_path / "mycert_cert.crt"
+    assert new.exists()
+    assert not old.exists()
+
+
+def test_pem_type_removed_respects_dry_run(tmp_path, monkeypatch):
+    """--dry-run reports the orphan prune but neither deletes it nor rewrites state."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                      expire_date=not_after.strftime(DATE_FMT))
+    _invoke(tmp_path, ["-P", "cert", "-P", "privkey"], [cert], monkeypatch)
+    privkey_f = tmp_path / "mycert_privkey.pem"
+    assert privkey_f.exists()
+
+    result = _invoke(tmp_path, ["--dry-run", "-P", "cert"], [cert], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert privkey_f.exists()  # not deleted under dry-run
+    state = json.loads((tmp_path / ".certhub-sync-state.json").read_text())
+    files = {e["file"] for e in state["certs"][0]["files"]}
+    assert "mycert_privkey.pem" in files  # state left untouched
+
+
+def test_pem_type_removed_triggers_post_hook(tmp_path, monkeypatch):
+    """Pruning an orphaned file (shrunk --pem) counts as a change and fires --post-hook."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                      expire_date=not_after.strftime(DATE_FMT))
+    _invoke(tmp_path, ["-P", "cert", "-P", "privkey"], [cert], monkeypatch)
+
+    marker = tmp_path / "hook-ran"
+    result = _invoke(
+        tmp_path, ["-P", "cert", "--post-hook", f"touch {marker}"], [cert], monkeypatch
+    )
+
+    assert result.exit_code == 0, result.output
+    assert marker.exists()
+
+
+def test_pem_type_added_prunes_nothing(tmp_path, monkeypatch):
+    """Adding a PEM type must not prune the existing files (superset -> no orphans)."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    cert = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                      expire_date=not_after.strftime(DATE_FMT))
+    _invoke(tmp_path, ["-P", "cert"], [cert], monkeypatch)
+    cert_f = tmp_path / "mycert_cert.pem"
+    assert cert_f.exists()
+
+    result = _invoke(tmp_path, ["-P", "cert", "-P", "privkey"], [cert], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert cert_f.exists()
+    assert (tmp_path / "mycert_privkey.pem").exists()
+    assert "removed" not in result.output.lower()
+
+
+def test_pem_prefix_change_prunes_old_prefix_file(tmp_path, monkeypatch):
+    """Changing a cert's pem_prefix (state is keyed by id) prunes the old-prefix file."""
+    cert_pem, key_pem, not_after = _make_cert(days_valid=365)
+    with_foo = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                          expire_date=not_after.strftime(DATE_FMT), pem_prefix="foo")
+    _invoke(tmp_path, [], [with_foo], monkeypatch)  # writes foo_bundle.pem
+    old = tmp_path / "foo_bundle.pem"
+    assert old.exists()
+
+    # Same cert id, new prefix -> new file written under bar_, old foo_ file pruned.
+    with_bar = _cert_dict(cert_id="mycert", certificate=cert_pem, private_key=key_pem,
+                          expire_date=not_after.strftime(DATE_FMT), pem_prefix="bar")
+    result = _invoke(tmp_path, [], [with_bar], monkeypatch)
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "bar_bundle.pem").exists()
+    assert not old.exists()
+    state = json.loads((tmp_path / ".certhub-sync-state.json").read_text())
+    files = {e["file"] for e in state["certs"][0]["files"]}
+    assert files == {"bar_bundle.pem"}
+
+
 def test_errored_cert_still_returned_is_not_pruned(tmp_path, monkeypatch):
     """A tracked cert still returned but with a server-side error keeps its local files."""
     cert_pem, key_pem, not_after = _make_cert(days_valid=365)
