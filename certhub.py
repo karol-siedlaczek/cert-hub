@@ -767,7 +767,7 @@ def cert_list(
     patterns: list[str] = Opt.patterns(),
     columns: list[str] = Opt.columns(),
     long: bool = Opt.long(),
-    type: str = Opt.type(),
+    type: str = Opt.type()
 ) -> None:
     client = Client.init(ctx, format, timeout=timeout)
     cert_type = CertType.from_string(type)
@@ -777,11 +777,10 @@ def cert_list(
     }
     response = client.request("GET", "/api/certs", params=params)
     sensitive_columns = ("certificate", "chain", "private_key")
-    long_columns = ("msg", "domains", "custom_attrs")
 
     result = CmdResult.from_response(response)
     if not long and response.ok:
-        result.drop_columns(sensitive_columns + long_columns)
+        result.drop_columns(sensitive_columns)
     return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
 
 
@@ -1093,21 +1092,35 @@ def cert_sync(
                  f"certificates no longer matching the filter will be removed: {', '.join(stale_ids)}"),
         ))
 
+    # Filenames materialised this run, per cert id. Lets the prune pass spot files
+    # recorded last run that the current --pem/--ext no longer produces.
+    current_files_by_id: dict[str, set[str]] = {}
+    for cert_id, pem_files in materialized:
+        current_files_by_id.setdefault(cert_id, set()).update(p.name for p in pem_files)
+
     # Note: if a pruned cert and a currently-synced cert resolve to the same
     # <prefix>_<type> filename with identical content, the checksum matches and the
     # just-written file is removed here; it is re-created and re-recorded next run.
     for prior_cert in prior_certs:
         prior_id = prior_cert.get("id")
         revoked = response_status.get(prior_id) == "REVOKED"
+        still_synced = prior_id in response_ids and not revoked
 
-        # Clean up a tracked cert only when it disappeared from the response OR is
-        # revoked. A cert still returned with any other (error) status keeps its files.
-        if prior_id in response_ids and not revoked:
+        # A cert still returned and successfully materialised this run keeps its files,
+        # but prune any it recorded last run that the current --pem/--ext no longer
+        # produces (e.g. a dropped PEM type or a changed extension). A cert still
+        # returned but NOT materialised (server-side error) is left entirely untouched.
+        if still_synced and prior_id not in current_files_by_id:
             continue
         removed, mismatched = [], []
         # Guard against a JSON-valid but structurally broken state entry: skip file
         # records with no "file" key (certs_dir / "" would resolve to the directory itself).
         file_entries = [e for e in prior_cert.get("files", []) if e.get("file")]
+        if still_synced:
+            current_names = current_files_by_id[prior_id]
+            file_entries = [e for e in file_entries if e["file"] not in current_names]
+            if not file_entries:
+                continue
         prune_files = [certs_dir / e["file"] for e in file_entries]
 
         for pem_file, entry in zip(prune_files, file_entries):
@@ -1128,7 +1141,12 @@ def cert_sync(
             parts.append(f"{verb} files: {', '.join(removed)}")
         if mismatched:
             parts.append(f"skipped (checksum mismatch): {', '.join(mismatched)}")
-        reason = "Revoked on server" if revoked else "No longer returned by server"
+        if revoked:
+            reason = "Revoked on server"
+        elif still_synced:
+            reason = "Filename no longer produced this run (changed --pem/--ext or pem_prefix)"
+        else:
+            reason = "No longer returned by server"
         results.append(CertUpdateResult(
             cert=prior_id,
             code=ExitCode.WARNING if mismatched else ExitCode.OK,
