@@ -261,8 +261,6 @@ Query params:
   - true: `1`, `true`, `True`, `yes`, `Yes`, or empty value (for example `?force=`)
   - false: `0`, `false`, `False`, `no`, `No`
 
-> **Breaking change:** The bulk `POST /api/certs/issue` and `POST /api/certs/renew` endpoints (with `?match=` filtering) have been removed. Use `GET /api/certs/catalog` to list matching certificates, then call `POST /api/certs/<id>/issue` or `POST /api/certs/<id>/renew` per certificate. The `certhub` CLI retains the `--pattern`/`--type` UX by querying `/api/certs/catalog` and looping per-cert internally.
-
 Examples:
 ```bash
 curl -s \
