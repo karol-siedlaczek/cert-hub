@@ -426,9 +426,10 @@ class CmdResult:
         if not LOGGER.disabled and sensitive_columns:
             data_to_log = self._mask_sensitive(data, sensitive_columns)
 
+        cmd = context_info.split(" ", 1)[1] if context_info and " " in context_info else context_info
         LOGGER.log(
             logging.INFO if self.exit_code == ExitCode.OK else logging.ERROR,
-            f"{f"Result for {context_info} command: " if context_info else ""}{data_to_log}"
+            f"{f"[{cmd}] Result: " if cmd else ""}{data_to_log}"
         )
         raise typer.Exit(code=self.exit_code.value)
 
@@ -526,7 +527,7 @@ def version(
     client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/version")
     result = CmdResult.from_response(response)
-    return result.render_and_exit(ctx.info_name, columns)
+    return result.render_and_exit(ctx.command_path, columns)
 
 
 @app.command(help="Reload server configuration (requires '*:reload' permission)")
@@ -545,7 +546,7 @@ def reload(
         return ExitCode.OK
     else:
         result = CmdResult.from_response(response)
-        return result.render_and_exit(ctx.info_name, columns)
+        return result.render_and_exit(ctx.command_path, columns)
 
 # ── token commands ───────────────────────────────────────────────────────────
 
@@ -559,7 +560,7 @@ def token_scope(
     client = Client.init(ctx, format, timeout=timeout)
     response = client.request("GET", "/api/token/scope")
     result = CmdResult.from_response(response)
-    return result.render_and_exit(ctx.info_name, columns)
+    return result.render_and_exit(ctx.command_path, columns)
 
 
 @token_app.command(name = "identity", help="Current identity (allowed CIDRs, permissions)")
@@ -575,7 +576,7 @@ def token_identity(
 
     if isinstance(result.data, dict) and result.data.get("permissions"):
         result.data["permissions"] = [f"{p['scope']}:{p['action']}" for p in result.data["permissions"]]
-    return result.render_and_exit(ctx.info_name, columns)
+    return result.render_and_exit(ctx.command_path, columns)
 
 
 @token_app.command(name="gen-hmac", help="Generate TOKEN_<ID>_HMAC for server configuration")
@@ -661,7 +662,7 @@ def cert_status(
     if result.data.get("certs"):
         result.data = result.data["certs"]
 
-    return result.render_and_exit(ctx.info_name, columns)
+    return result.render_and_exit(ctx.command_path, columns)
 
 
 @cert_app.command(name = "issue", help="Issue new certificates for the current identity or selected pattern")
@@ -679,7 +680,7 @@ def cert_issue(
     cert_ids = resolve_cert_ids(client, permission="issue", patterns=patterns, cert_type=cert_type.value)
 
     rows, exit_code = fanout_certs(client, cert_ids, "issue", force=force)
-    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.command_path, columns)
 
 
 @cert_app.command(name = "renew", help="Renew existing certificates for the current identity or selected pattern")
@@ -698,7 +699,7 @@ def cert_renew(
 
     rows, exit_code = fanout_certs(client, cert_ids, "renew", force=force)
 
-    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.command_path, columns)
 
 
 @cert_app.command(name="revoke", help="Revoke certificates for the current identity or selected pattern (irreversible)")
@@ -733,7 +734,7 @@ def cert_revoke(
             raise typer.Exit(code=1)
 
     rows, exit_code = fanout_certs(client, cert_ids, "revoke")
-    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.info_name, columns)
+    return CmdResult.from_dict(rows, exit_code).render_and_exit(ctx.command_path, columns)
 
 
 @cert_app.command(name = "pem", help="Print raw PEM material (bundle, cert, chain or privkey) for a single certificate")
@@ -756,7 +757,7 @@ def cert_pem(
         raise typer.Exit(ExitCode.OK.value)
 
     # Error responses are JSON envelopes (e.g. 409 not issued, 403, 404) — render them.
-    CmdResult.from_response(response).render_and_exit(ctx.info_name)
+    CmdResult.from_response(response).render_and_exit(ctx.command_path)
 
 
 @cert_app.command(name = "list", help="List certificates available for the current identity or selected pattern")
@@ -781,7 +782,7 @@ def cert_list(
     result = CmdResult.from_response(response)
     if not long and response.ok:
         result.drop_columns(sensitive_columns)
-    return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns)
+    return result.render_and_exit(ctx.command_path, columns, sensitive_columns=sensitive_columns)
 
 
 @cert_app.command(name="show", help="Show details for a single certificate")
@@ -823,7 +824,7 @@ def cert_show(
         else:
             result.data = matched[0]
 
-    return result.render_and_exit(ctx.info_name, columns, sensitive_columns=sensitive_columns, single_row=True)
+    return result.render_and_exit(ctx.command_path, columns, sensitive_columns=sensitive_columns, single_row=True)
 
 
 @cert_app.command(name = "sync", help="Sync local certificate files with the server: download and replace expiring, expired or missing certificates, and remove files for revoked ones")
@@ -934,7 +935,7 @@ def cert_sync(
         if status_file and not dry_run:
             fetch_msg = f"{ExitCode.CRITICAL.name}: Failed to fetch certificates, response: {result.data}"
             write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, fetch_msg)
-        result.render_and_exit(ctx.info_name)
+        result.render_and_exit(ctx.command_path)
 
     results: list[CertUpdateResult] = []
 
@@ -1173,7 +1174,7 @@ def cert_sync(
             hook_msg = f"{ExitCode.CRITICAL.name}: {data['msg']}, synced certs: {data['synced_certs']}, error: {data['error']}"
             if status_file and not dry_run:
                 write_status_file(Path(status_file), result.data, ExitCode.CRITICAL, hook_msg)
-            return result.render_and_exit(ctx.info_name)
+            return result.render_and_exit(ctx.command_path)
 
     if not dry_run:
         current_certs = []
@@ -1203,7 +1204,7 @@ def cert_sync(
     if status_file and not dry_run:
         write_status_file(Path(status_file), result.data, highest_exit_code, status_msg)
 
-    return result.render_and_exit(ctx.info_name, columns)
+    return result.render_and_exit(ctx.command_path, columns)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
